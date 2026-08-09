@@ -22,11 +22,11 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
-    const { imageBase64, imageFileID, prompt, imageHash, freeTrial, deviceId } = event || {};
+    const { imageBase64, imageFileID: inputFileID, prompt, imageHash, freeTrial, deviceId } = event || {};
     // 大图走云存储：前端传 fileID，函数下载后转 base64
     let resolvedImageBase64 = imageBase64;
-    if (!resolvedImageBase64 && imageFileID) {
-      const downloaded = await cloud.downloadFile({ fileID: imageFileID });
+    if (!resolvedImageBase64 && inputFileID) {
+      const downloaded = await cloud.downloadFile({ fileID: inputFileID });
       resolvedImageBase64 = downloaded.fileContent.toString("base64");
     }
     if (!resolvedImageBase64) {
