@@ -40,8 +40,37 @@ function requestJson(path, options = {}) {
   return callFunction(name, (options && options.data) || {});
 }
 
+// 把 base64 数据写到本地临时文件并上传到云存储，返回 fileID。
+// 云函数入参有大小限制，大图不能直接塞进 callFunction。
+function uploadDataUrl(dataUrl, prefix = "upload") {
+  return new Promise((resolve, reject) => {
+    const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      reject(new Error("图片数据格式无效"));
+      return;
+    }
+    const mime = match[1] || "image/jpeg";
+    const b64 = match[2];
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    const filePath = `${wx.env.USER_DATA_PATH}/${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    try {
+      wx.getFileSystemManager().writeFileSync(filePath, wx.base64ToArrayBuffer(b64));
+    } catch (error) {
+      reject(new Error(`写入临时文件失败：${error.message || ""}`));
+      return;
+    }
+    wx.cloud.uploadFile({
+      cloudPath: `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
+      filePath,
+      success: (res) => resolve(res.fileID),
+      fail: (err) => reject(new Error((err && err.errMsg) || "上传云存储失败")),
+    });
+  });
+}
+
 module.exports = {
   API_BASE: "",
   requestJson,
   callFunction,
+  uploadDataUrl,
 };

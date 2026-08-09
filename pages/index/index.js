@@ -1,5 +1,5 @@
 const { BEAD_PALETTES } = require("../../utils/palettes");
-const { API_BASE, requestJson, callFunction } = require("../../utils/api");
+const { API_BASE, requestJson, callFunction, uploadDataUrl } = require("../../utils/api");
 const { sha256Bytes } = require("../../utils/sha256");
 const { base64ToBytes, arrayBufferToUtf8 } = require("../../utils/image");
 
@@ -829,10 +829,12 @@ Page({
 
     this.aiOptimizeInFlightKey = cacheKey;
     this.aiOptimizeInFlightPromise = (async () => {
+      // 大图先传云存储，避免 callFunction 入参超限
+      const imageFileID = await uploadDataUrl(imageBase64, "ai-input");
       const result = await requestJson("/api/ai-optimize", {
         method: "POST",
         data: {
-          imageBase64,
+          imageFileID,
           prompt,
           imageHash: this.sourceFingerprint,
           accessToken: this.accessToken || undefined,
@@ -1656,36 +1658,34 @@ Page({
     return text;
   },
 
-  submitDownload({ filename, dataUrl = null, text = null }) {
-    return new Promise((resolve, reject) => {
-      const payload = {
-        filename: filename.replace(/\.[^/.]+$/, ""),
-        imageHash: this.sourceFingerprint,
-      };
-      if (dataUrl) payload.dataUrl = dataUrl;
-      if (text !== null && text !== undefined) payload.text = text;
-      requestJson("/api/download-prepare", { method: "POST", data: payload })
-        .then((result) => {
-          const fileID = result && result.fileID;
-          if (!fileID) {
-            reject(new Error("下载准备失败，请重试。"));
-            return;
-          }
-          // 云函数版：文件已上传到云存储，用 wx.cloud.downloadFile 拉取
-          wx.cloud.downloadFile({
-            fileID,
-            success: (dl) => {
-              wx.getFileSystemManager().readFile({
-                filePath: dl.tempFilePath,
-                success: (read) => resolve(read.data),
-                fail: () => reject(new Error("读取下载文件失败，请重试。")),
-              });
-            },
-            fail: () => reject(new Error("下载文件失败，请重试。")),
-          });
-        })
-        .catch((error) => reject(error));
+  async submitDownload({ filename, dataUrl = null, text = null }) {
+    const payload = {
+      filename: filename.replace(/\.[^/.]+$/, ""),
+      imageHash: this.sourceFingerprint,
+    };
+    if (dataUrl) payload.dataFileID = await uploadDataUrl(dataUrl, "download");
+    if (text !== null && text !== undefined) payload.text = text;
+    const result = await requestJson("/api/download-prepare", { method: "POST", data: payload });
+    const fileID = result && result.fileID;
+    if (!fileID) {
+      throw new Error("下载准备失败，请重试。");
+    }
+    // 云函数版：文件已上传到云存储，用 wx.cloud.downloadFile 拉取
+    const dl = await new Promise((resolve, reject) => {
+      wx.cloud.downloadFile({
+        fileID,
+        success: resolve,
+        fail: () => reject(new Error("下载文件失败，请重试。")),
+      });
     });
+    const read = await new Promise((resolve, reject) => {
+      wx.getFileSystemManager().readFile({
+        filePath: dl.tempFilePath,
+        success: resolve,
+        fail: () => reject(new Error("读取下载文件失败，请重试。")),
+      });
+    });
+    return read.data;
   },
 
   saveDownloadedFile(buffer, filename) {

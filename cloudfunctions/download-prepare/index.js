@@ -17,7 +17,7 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
-    const { filename = "export", imageHash, dataUrl, text } = event || {};
+    const { filename = "export", imageHash, dataUrl, dataFileID, text } = event || {};
     const safeFilename = String(filename).replace(/[/\\\r\n\0]/g, "_").replace(/\.[^/.]+$/, "");
 
     const store = await readStore();
@@ -34,7 +34,14 @@ exports.main = async (event) => {
       return { error: "Download denied", message: bindResult.message };
     }
 
-    const prepared = await prepareDownloadFile({ dataUrl, text, filename: safeFilename });
+    // 图片大文件走云存储：前端传 dataFileID，函数下载后转 dataUrl
+    let resolvedDataUrl = dataUrl;
+    if (!resolvedDataUrl && dataFileID) {
+      const downloaded = await cloud.downloadFile({ fileID: dataFileID });
+      const mime = /\.png/i.test(dataFileID) ? "image/png" : "image/jpeg";
+      resolvedDataUrl = `data:${mime};base64,${downloaded.fileContent.toString("base64")}`;
+    }
+    const prepared = await prepareDownloadFile({ dataUrl: resolvedDataUrl, text, filename: safeFilename });
     consumeCardAction(card, "download");
     appendLog(store, OPENID, {
       type: "download",

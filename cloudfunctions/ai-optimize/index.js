@@ -22,8 +22,14 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
-    const { imageBase64, prompt, imageHash, freeTrial, deviceId } = event || {};
-    if (!imageBase64) {
+    const { imageBase64, imageFileID, prompt, imageHash, freeTrial, deviceId } = event || {};
+    // 大图走云存储：前端传 fileID，函数下载后转 base64
+    let resolvedImageBase64 = imageBase64;
+    if (!resolvedImageBase64 && imageFileID) {
+      const downloaded = await cloud.downloadFile({ fileID: imageFileID });
+      resolvedImageBase64 = downloaded.fileContent.toString("base64");
+    }
+    if (!resolvedImageBase64) {
       return { error: "Missing imageBase64 parameter" };
     }
 
@@ -42,7 +48,7 @@ exports.main = async (event) => {
       if (!normalizedHash) {
         return { error: "AI optimization denied", message: "未识别到当前图片，请重新上传后重试。" };
       }
-      const result = await optimizeImage(imageBase64, prompt);
+      const result = await optimizeImage(resolvedImageBase64, prompt);
       const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
       consumeFreeTrial(store, deviceId, normalizedHash);
       consumeFreeTrial(store, `openid:${OPENID}`, normalizedHash);
@@ -65,7 +71,7 @@ exports.main = async (event) => {
       return { error: "AI optimization denied", message: bindResult.message };
     }
 
-    const result = await optimizeImage(imageBase64, prompt);
+    const result = await optimizeImage(resolvedImageBase64, prompt);
     const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
     consumeCardAction(card, "ai");
     appendLog(store, OPENID, {
