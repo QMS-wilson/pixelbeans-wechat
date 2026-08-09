@@ -1,39 +1,47 @@
-const config = require("../config.js");
+// 云函数版接口封装：把原有 /api/* 路径映射到云函数，页面代码无需改动。
+const PATH_TO_FUNCTION = {
+  "/api/access-status": "access-status",
+  "/api/redeem-card": "redeem-card",
+  "/api/logout-access": "logout-access",
+  "/api/ai-optimize": "ai-optimize",
+  "/api/download-prepare": "download-prepare",
+};
 
-const API_BASE = (config && config.apiBase) || "http://127.0.0.1:9090";
-
-function requestJson(path, options = {}) {
-  const { method = "GET", data = null, header = {} } = options;
+function callFunction(name, data = {}) {
   return new Promise((resolve, reject) => {
-    wx.request({
-      url: `${API_BASE}${path}`,
-      method,
+    wx.cloud.callFunction({
+      name,
       data,
-      header: {
-        "content-type": "application/json",
-        ...header,
-      },
       success: (res) => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(res.data);
+        const result = res && res.result;
+        if (result && result.error) {
+          const error = new Error(result.message || result.error);
+          error.status = result.status || 400;
+          reject(error);
           return;
         }
-        const error = new Error(
-          (res.data && (res.data.message || res.data.error)) || `请求失败（${res.statusCode}）`,
-        );
-        error.status = res.statusCode;
-        reject(error);
+        resolve(result || {});
       },
-      fail: () => {
-        reject(
-          new Error("连接后端服务失败，请确认后端已启动；真机预览请把 config.js 的 apiBase 改为电脑局域网 IP"),
-        );
+      fail: (err) => {
+        const message = err && err.errMsg ? `云函数调用失败：${err.errMsg}` : "云函数调用失败，请检查云开发环境。";
+        reject(new Error(message));
       },
     });
   });
 }
 
+// 兼容旧调用：requestJson("/api/xxx", { method, data })
+function requestJson(path, options = {}) {
+  const cleanPath = String(path || "").split("?")[0];
+  const name = PATH_TO_FUNCTION[cleanPath];
+  if (!name) {
+    return Promise.reject(new Error(`未找到云函数映射：${cleanPath}`));
+  }
+  return callFunction(name, (options && options.data) || {});
+}
+
 module.exports = {
-  API_BASE,
+  API_BASE: "",
   requestJson,
+  callFunction,
 };

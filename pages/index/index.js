@@ -1652,60 +1652,30 @@ Page({
       const payload = {
         filename: filename.replace(/\.[^/.]+$/, ""),
         imageHash: this.sourceFingerprint,
-        accessToken: this.accessToken || "",
       };
       if (dataUrl) payload.dataUrl = dataUrl;
       if (text !== null && text !== undefined) payload.text = text;
-      wx.request({
-        url: `${API_BASE}/api/download-prepare`,
-        method: "POST",
-        data: payload,
-        header: { "content-type": "application/json" },
-        success: (res) => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            const fileId = res.data && res.data.fileId;
-            if (!fileId) {
-              reject(new Error("下载准备失败，请重试。"));
-              return;
-            }
-            // 两段式下载：先由后端保存临时文件，再用 downloadFile 拉取，
-            // 避免 wx.request 传输大体积 base64 超限。
-            wx.downloadFile({
-              url: `${API_BASE}/api/download-file?fileId=${fileId}`,
-              success: (dl) => {
-                if (dl.statusCode >= 200 && dl.statusCode < 300) {
-                  wx.getFileSystemManager().readFile({
-                    filePath: dl.tempFilePath,
-                    success: (read) => resolve(read.data),
-                    fail: () => reject(new Error("读取下载文件失败，请重试。")),
-                  });
-                } else {
-                  reject(new Error(`下载失败（${dl.statusCode}），请重试。`));
-                }
-              },
-              fail: () =>
-                reject(
-                  new Error("连接后端服务失败，请确认后端已启动；真机预览请把 config.js 的 apiBase 改为电脑局域网 IP"),
-                ),
-            });
+      requestJson("/api/download-prepare", { method: "POST", data: payload })
+        .then((result) => {
+          const fileID = result && result.fileID;
+          if (!fileID) {
+            reject(new Error("下载准备失败，请重试。"));
             return;
           }
-          let message = "下载失败，请稍后重试。";
-          try {
-            const json = JSON.parse(arrayBufferToUtf8(res.data));
-            message = json.message || json.error || message;
-          } catch {
-            // ignore
-          }
-          const error = new Error(message);
-          error.status = res.statusCode;
-          reject(error);
-        },
-        fail: () =>
-          reject(
-            new Error("连接后端服务失败，请确认后端已启动；真机预览请把 config.js 的 apiBase 改为电脑局域网 IP"),
-          ),
-      });
+          // 云函数版：文件已上传到云存储，用 wx.cloud.downloadFile 拉取
+          wx.cloud.downloadFile({
+            fileID,
+            success: (dl) => {
+              wx.getFileSystemManager().readFile({
+                filePath: dl.tempFilePath,
+                success: (read) => resolve(read.data),
+                fail: () => reject(new Error("读取下载文件失败，请重试。")),
+              });
+            },
+            fail: () => reject(new Error("下载文件失败，请重试。")),
+          });
+        })
+        .catch((error) => reject(error));
     });
   },
 

@@ -1,0 +1,79 @@
+const cloud = require("wx-server-sdk");
+const {
+  readStore,
+  writeStore,
+  getBinding,
+  findCardByCode,
+  getFreeTrialStatus,
+  consumeFreeTrial,
+  normalizeImageHash,
+  assertCardAction,
+  bindCardImage,
+  consumeCardAction,
+  buildAccessPayload,
+  appendLog,
+  optimizeImage,
+} = require("./lib/card-lib.js");
+
+cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
+
+// AI 优化：付费卡密或免费体验
+exports.main = async (event) => {
+  try {
+    const { OPENID } = cloud.getWXContext();
+    const { imageBase64, prompt, imageHash, freeTrial, deviceId } = event || {};
+    if (!imageBase64) {
+      return { error: "Missing imageBase64 parameter" };
+    }
+
+    const store = await readStore();
+    const binding = getBinding(store, OPENID);
+    const card = binding ? findCardByCode(store, binding.cardCode) : null;
+    const isTrial = !card && freeTrial === true;
+
+    if (isTrial) {
+      const deviceTrial = getFreeTrialStatus(store, deviceId);
+      const openidTrial = getFreeTrialStatus(store, `openid:${OPENID}`);
+      if (!deviceTrial || deviceTrial.used || (openidTrial && openidTrial.used)) {
+        return { error: "AI optimization denied", message: "免费 AI 体验次数已用完，请兑换卡密后继续使用。" };
+      }
+      const normalizedHash = normalizeImageHash(imageHash);
+      if (!normalizedHash) {
+        return { error: "AI optimization denied", message: "未识别到当前图片，请重新上传后重试。" };
+      }
+      const result = await optimizeImage(imageBase64, prompt);
+      consumeFreeTrial(store, deviceId, normalizedHash);
+      consumeFreeTrial(store, `openid:${OPENID}`, normalizedHash);
+      appendLog(store, OPENID, { type: "ai_free_trial", imageHash: normalizedHash, detail: "free trial ai optimize" });
+      await writeStore(store);
+      return { success: true, ...result, freeTrialUsed: true };
+    }
+
+    if (!card) {
+      return { error: "AI optimization denied", message: "请先兑换卡密后再操作。" };
+    }
+    const allowed = assertCardAction(card, imageHash, "ai");
+    if (!allowed.ok) {
+      await writeStore(store);
+      return { error: "AI optimization denied", message: allowed.message };
+    }
+    const bindResult = bindCardImage(card, allowed.imageHash);
+    if (!bindResult.ok) {
+      await writeStore(store);
+      return { error: "AI optimization denied", message: bindResult.message };
+    }
+
+    const result = await optimizeImage(imageBase64, prompt);
+    consumeCardAction(card, "ai");
+    appendLog(store, OPENID, {
+      type: "ai_optimize",
+      cardCode: card.code,
+      imageHash: card.imageHash || allowed.imageHash,
+      detail: "ai optimize success",
+    });
+    await writeStore(store);
+    return { success: true, ...result, ...buildAccessPayload(card) };
+  } catch (error) {
+    return { error: "AI optimization failed", message: error.message || "未知错误" };
+  }
+};

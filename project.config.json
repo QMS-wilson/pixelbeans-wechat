@@ -32,9 +32,10 @@
     "disableSWC": true
   },
   "compileType": "miniprogram",
-  "libVersion": "3.7.1",
+  "libVersion": "3.17.0",
   "appid": "wx2bddf9580a749c36",
   "projectname": "pixelbeans-wechat",
+  "cloudfunctionRoot": "cloudfunctions/",
   "condition": {},
   "simulatorPluginLibVersion": {},
   "editorSetting": {}
