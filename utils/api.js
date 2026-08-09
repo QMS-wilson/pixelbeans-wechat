@@ -53,7 +53,8 @@ function uploadDataChunks(dataUrl, prefix = "upload") {
     const b64 = match[2];
     const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
     const uploadId = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const CHUNK_SIZE = 400 * 1024;
+    // 云函数文本请求体上限 100KB，这里用 64KB 分块留足余量
+    const CHUNK_SIZE = 64 * 1024;
     const chunks = [];
     for (let i = 0; i < b64.length; i += CHUNK_SIZE) {
       chunks.push(b64.slice(i, i + CHUNK_SIZE));
@@ -65,9 +66,21 @@ function uploadDataChunks(dataUrl, prefix = "upload") {
       );
     (async () => {
       try {
-        for (let i = 0; i < total; i += 1) {
-          await uploadChunk(i);
+        // 3 路并发上传，加快速度（fileID 按 index 记录，乱序无影响）
+        let cursor = 0;
+        const workers = [];
+        for (let w = 0; w < Math.min(3, total); w += 1) {
+          workers.push(
+            (async () => {
+              while (cursor < total) {
+                const index = cursor;
+                cursor += 1;
+                await uploadChunk(index);
+              }
+            })(),
+          );
         }
+        await Promise.all(workers);
         resolve({ uploadId, ext, total });
       } catch (error) {
         reject(new Error(`图片分块上传失败：${(error && error.message) || ""}`));
