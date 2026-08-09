@@ -57,7 +57,15 @@
   border-bottom: 1rpx solid rgba(15, 23, 42, 0.06);
 }
 .card-info { flex: 1; margin-right: 16rpx; min-width: 0; }
+.code-row { display: flex; align-items: center; gap: 12rpx; }
 .code { display: block; font-family: ui-monospace, monospace; font-weight: 800; font-size: 26rpx; }
+.copy-hint {
+  color: #3157d5;
+  font-size: 22rpx;
+  background: rgba(49, 87, 213, 0.1);
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+}
 .meta { display: block; color: #64748b; font-size: 22rpx; margin-top: 6rpx; }
 .note { display: block; color: #94a3b8; font-size: 22rpx; margin-top: 4rpx; }
 .empty { color: #94a3b8; text-align: center; padding: 40rpx 0; }

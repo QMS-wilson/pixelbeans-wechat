@@ -24,7 +24,10 @@
     <scroll-view scroll-y class="card-list">
       <view class="card-item" wx:for="{{cards}}" wx:key="code">
         <view class="card-info">
-          <text class="code">{{item.code}}</text>
+          <view class="code-row">
+            <text class="code" data-code="{{item.code}}" bindtap="copyCardCode">{{item.code}}</text>
+            <text class="copy-hint" data-code="{{item.code}}" bindtap="copyCardCode">复制</text>
+          </view>
           <text class="meta">{{item.statusText}} · AI {{item.aiOptimizeCount}}/3 · 下载 {{item.downloadCount}}/3 · {{item.createdAtText}}</text>
           <text class="note" wx:if="{{item.note}}">{{item.note}}</text>
         </view>

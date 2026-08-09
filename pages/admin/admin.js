@@ -148,6 +148,15 @@ Page({
     }
   },
 
+  copyCardCode(e) {
+    const code = e.currentTarget.dataset.code;
+    if (!code) return;
+    wx.setClipboardData({
+      data: code,
+      success: () => this.setMessage(`已复制：${code}`),
+    });
+  },
+
   clearKey() {
     wx.removeStorageSync(ADMIN_KEY_STORAGE);
     this.setData({ adminKey: "", cards: [], logs: [], loaded: false });
