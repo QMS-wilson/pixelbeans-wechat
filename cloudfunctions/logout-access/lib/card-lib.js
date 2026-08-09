@@ -1,5 +1,6 @@
 // 拼豆卡密 - 云函数共享库
-// 用法：复制本文件到每个云函数目录下的 lib/card-lib.js
+// 本文件是唯一源（shared/card-lib.js）：修改后复制到每个云函数目录下的 lib/card-lib.js。
+// 注意：shared 不是云函数，不要上传；cloudfunctions/ 下每个子目录才是一个云函数。
 // 数据：cards.json 整体作为 JSON 文档存在云数据库 meta 集合（_id = "store"），保持原格式。
 const cloud = require("wx-server-sdk");
 const crypto = require("crypto");
