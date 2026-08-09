@@ -12,6 +12,17 @@
 }
 .title { font-size: 38rpx; font-weight: 800; color: #0f172a; }
 .back { color: #3157d5; font-size: 28rpx; }
+.status {
+  padding: 18rpx 24rpx;
+  border-radius: 16rpx;
+  font-size: 24rpx;
+  margin-bottom: 20rpx;
+  line-height: 1.5;
+}
+.status.info { background: rgba(49, 87, 213, 0.08); color: #3157d5; }
+.status.success { background: rgba(34, 197, 94, 0.1); color: #166534; }
+.status.warn { background: rgba(245, 158, 11, 0.12); color: #92400e; }
+.status.error { background: rgba(239, 68, 68, 0.1); color: #b91c1c; }
 .panel {
   background: #fff;
   border-radius: 24rpx;

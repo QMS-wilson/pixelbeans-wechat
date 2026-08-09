@@ -4,13 +4,15 @@
     <text class="back" bindtap="goBack">返回</text>
   </view>
 
+  <view class="status {{statusType}}">{{statusText}}</view>
+
   <view class="panel">
     <view class="row">
       <text class="label">管理员密钥</text>
       <input class="input" password value="{{adminKey}}" bindinput="onAdminKeyInput" placeholder="请输入管理密码" />
     </view>
     <view class="row-actions">
-      <button class="btn primary" bindtap="loadCards" disabled="{{!adminKey || loading}}">加载数据</button>
+      <button class="btn primary" bindtap="loadCards" disabled="{{loading}}">加载数据</button>
       <button class="btn ghost" bindtap="clearKey">清除密钥</button>
     </view>
   </view>

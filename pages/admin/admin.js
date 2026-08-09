@@ -32,12 +32,23 @@ Page({
     genNote: "",
     message: "",
     messageType: "",
+    statusText: "",
+    statusType: "",
   },
 
   onLoad() {
     const adminKey = wx.getStorageSync(ADMIN_KEY_STORAGE) || "";
     this.setData({ adminKey });
-    if (adminKey) this.loadCards();
+    if (adminKey) {
+      this.setStatus("密钥已读取，正在加载卡密…", "info");
+      this.loadCards();
+    } else {
+      this.setStatus("未设置管理密钥：请返回主页在「意见反馈」栏输入管理密码进入，或在本页输入密钥后点「加载数据」。", "warn");
+    }
+  },
+
+  setStatus(text, type = "info") {
+    this.setData({ statusText: text, statusType: type });
   },
 
   onAdminKeyInput(e) {
@@ -60,11 +71,18 @@ Page({
   },
 
   async loadCards() {
+    if (!this.data.adminKey) {
+      this.setMessage("请先输入管理员密钥", "error");
+      this.setStatus("缺少管理密钥，无法加载。", "warn");
+      return;
+    }
     this.setData({ loading: true });
+    this.setStatus("正在加载卡密…", "info");
     try {
       const result = await callAdmin({ action: "list", adminKey: this.data.adminKey });
       if (result.error) {
         this.setMessage(result.message || "密钥无效", "error");
+        this.setStatus(result.message || "加载失败", "error");
         return;
       }
       const cards = (result.cards || []).map((card) => ({
@@ -79,8 +97,10 @@ Page({
         exhausted: cards.filter((c) => c.status === "exhausted").length,
       };
       this.setData({ cards, logs, summary, loaded: true });
+      this.setStatus(`已加载 ${cards.length} 张卡密，日志 ${logs.length} 条。`, "success");
     } catch (error) {
       this.setMessage(error.message || "加载失败", "error");
+      this.setStatus(error.message || "加载失败（请确认 card-admin 云函数已部署）", "error");
     } finally {
       this.setData({ loading: false });
     }
@@ -131,6 +151,7 @@ Page({
   clearKey() {
     wx.removeStorageSync(ADMIN_KEY_STORAGE);
     this.setData({ adminKey: "", cards: [], logs: [], loaded: false });
+    this.setStatus("已清除密钥。", "warn");
   },
 
   goBack() {

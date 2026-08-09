@@ -199,7 +199,7 @@
       class="feedback-input"
       value="{{feedbackInput}}"
       bindinput="onFeedbackInput"
-      placeholder="请输入您的意见或建议（也可在此输入管理密码进入管理页）"
+      placeholder="请输入您的意见或建议"
       maxlength="1000"
       auto-height
     />
