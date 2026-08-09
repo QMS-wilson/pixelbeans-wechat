@@ -1,5 +1,6 @@
 const cloud = require("wx-server-sdk");
 const {
+  db,
   readStore,
   writeStore,
   sanitizeCardCode,
@@ -18,6 +19,27 @@ exports.main = async (event) => {
     // 校验管理密钥（供反馈页判断是否进入管理页，不返回密钥本身）
     if (action === "verify") {
       return { ok: requireAdmin(adminKey) };
+    }
+    if (action === "debug") {
+      if (!requireAdmin(adminKey)) {
+        return { error: "Forbidden", message: "管理员密钥无效。" };
+      }
+      try {
+        const res = await db.collection("meta").doc("store").get();
+        const doc = res.data || {};
+        const top = Object.keys(doc);
+        const inner = doc.data && typeof doc.data === "object" ? Object.keys(doc.data) : [];
+        const innerType = doc.data === undefined ? "none" : typeof doc.data;
+        return {
+          docExists: true,
+          docKeys: top,
+          dataType: innerType,
+          dataKeys: inner,
+          hasCards: Array.isArray((doc.data && doc.data.cards) || doc.cards),
+        };
+      } catch (error) {
+        return { docExists: false, error: error.message || "meta/store 不存在" };
+      }
     }
     if (!requireAdmin(adminKey)) {
       return { error: "Forbidden", message: "管理员密钥无效。" };

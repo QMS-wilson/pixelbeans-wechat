@@ -16,9 +16,24 @@ const META_DOC_ID = "store";
 async function readStore() {
   try {
     const res = await db.collection(META_COLLECTION).doc(META_DOC_ID).get();
-    const data = res.data && res.data.data;
-    if (data && typeof data === "object") return upgradeStore(data);
-    return { cards: [], logs: [], freeTrials: {}, bindings: {} };
+    const doc = res.data;
+    if (!doc) return { cards: [], logs: [], freeTrials: {}, bindings: {} };
+    // 兼容导入结构：
+    // 1) 文档形如 { _id:"store", data:{ cards, logs, freeTrials, bindings } }
+    // 2) 字段直接平铺在文档上：{ _id:"store", cards, logs, freeTrials }
+    // 3) data 字段是 JSON 字符串
+    let store = doc.data;
+    if (typeof store === "string") {
+      try {
+        store = JSON.parse(store);
+      } catch {
+        store = null;
+      }
+    }
+    if (!store || typeof store !== "object" || !Array.isArray(store.cards)) {
+      store = doc;
+    }
+    return upgradeStore(store);
   } catch (error) {
     return { cards: [], logs: [], freeTrials: {}, bindings: {} };
   }
