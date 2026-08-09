@@ -539,6 +539,23 @@ async function uploadImageResult(dataUrl, taskId) {
   return uploaded.fileID;
 }
 
+// 按 uploadId 合并分块上传的大文件（chunks 集合里记录的各块 fileID）
+async function assembleUpload(uploadId) {
+  const res = await db.collection("chunks").doc(uploadId).get();
+  const parts = (res.data && res.data.parts) || {};
+  const total = Number((res.data && res.data.total) || 0) || Object.keys(parts).length;
+  const keys = Object.keys(parts).sort((a, b) => Number(a) - Number(b));
+  if (!keys.length || keys.length !== total) {
+    throw new Error("分块上传不完整，请重试。");
+  }
+  let base64 = "";
+  for (const key of keys) {
+    const downloaded = await cloud.downloadFile({ fileID: parts[key] });
+    base64 += downloaded.fileContent.toString("utf8");
+  }
+  return Buffer.from(base64, "base64");
+}
+
 module.exports = {
   cloud,
   db,
@@ -565,4 +582,5 @@ module.exports = {
   optimizeImage,
   prepareDownloadFile,
   uploadImageResult,
+  assembleUpload,
 };

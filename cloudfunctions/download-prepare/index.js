@@ -9,6 +9,7 @@ const {
   consumeCardAction,
   appendLog,
   prepareDownloadFile,
+  assembleUpload,
 } = require("./lib/card-lib.js");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
@@ -17,7 +18,7 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
-    const { filename = "export", imageHash, dataUrl, dataFileID, text } = event || {};
+    const { filename = "export", imageHash, dataUrl, dataFileID, dataUploadId, dataExt, text } = event || {};
     const safeFilename = String(filename).replace(/[/\\\r\n\0]/g, "_").replace(/\.[^/.]+$/, "");
 
     const store = await readStore();
@@ -40,6 +41,11 @@ exports.main = async (event) => {
       const downloaded = await cloud.downloadFile({ fileID: dataFileID });
       const mime = /\.png/i.test(dataFileID) ? "image/png" : "image/jpeg";
       resolvedDataUrl = `data:${mime};base64,${downloaded.fileContent.toString("base64")}`;
+    }
+    if (!resolvedDataUrl && dataUploadId) {
+      const assembled = await assembleUpload(dataUploadId);
+      const mime = dataExt === "png" ? "image/png" : dataExt === "webp" ? "image/webp" : "image/jpeg";
+      resolvedDataUrl = `data:${mime};base64,${assembled.toString("base64")}`;
     }
     const prepared = await prepareDownloadFile({ dataUrl: resolvedDataUrl, text, filename: safeFilename });
     consumeCardAction(card, "download");

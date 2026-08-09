@@ -40,9 +40,9 @@ function requestJson(path, options = {}) {
   return callFunction(name, (options && options.data) || {});
 }
 
-// 把 base64 数据写到本地临时文件并上传到云存储，返回 fileID。
-// 云函数入参有大小限制，大图不能直接塞进 callFunction。
-function uploadDataUrl(dataUrl, prefix = "upload", retries = 3) {
+// 大图分块上传：把 base64 切成小块逐块调用 upload-chunk 云函数（云函数内部写入云存储）。
+// 云函数入参有大小限制，且客户端直传大文件容易连接重置，所以走分块。
+function uploadDataChunks(dataUrl, prefix = "upload") {
   return new Promise((resolve, reject) => {
     const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
@@ -52,29 +52,27 @@ function uploadDataUrl(dataUrl, prefix = "upload", retries = 3) {
     const mime = match[1] || "image/jpeg";
     const b64 = match[2];
     const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
-    const filePath = `${wx.env.USER_DATA_PATH}/${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    try {
-      wx.getFileSystemManager().writeFileSync(filePath, wx.base64ToArrayBuffer(b64));
-    } catch (error) {
-      reject(new Error(`写入临时文件失败：${error.message || ""}`));
-      return;
+    const uploadId = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const CHUNK_SIZE = 400 * 1024;
+    const chunks = [];
+    for (let i = 0; i < b64.length; i += CHUNK_SIZE) {
+      chunks.push(b64.slice(i, i + CHUNK_SIZE));
     }
-    const uploadOnce = (attempt) => {
-      wx.cloud.uploadFile({
-        cloudPath: `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
-        filePath,
-        success: (res) => resolve(res.fileID),
-        fail: (err) => {
-          if (attempt < retries) {
-            setTimeout(() => uploadOnce(attempt + 1), 800 * attempt);
-          } else {
-            const detail = (err && err.errMsg) || (err && err.message) || "";
-            reject(new Error(`上传云存储失败（网络中断，已重试 ${retries} 次）：${detail}`));
-          }
-        },
-      });
-    };
-    uploadOnce(1);
+    const total = chunks.length;
+    const uploadChunk = (index) =>
+      callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }).catch(() =>
+        callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }),
+      );
+    (async () => {
+      try {
+        for (let i = 0; i < total; i += 1) {
+          await uploadChunk(i);
+        }
+        resolve({ uploadId, ext, total });
+      } catch (error) {
+        reject(new Error(`图片分块上传失败：${(error && error.message) || ""}`));
+      }
+    })();
   });
 }
 
@@ -82,5 +80,5 @@ module.exports = {
   API_BASE: "",
   requestJson,
   callFunction,
-  uploadDataUrl,
+  uploadDataChunks,
 };

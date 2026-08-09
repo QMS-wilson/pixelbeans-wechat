@@ -1,5 +1,5 @@
 const { BEAD_PALETTES } = require("../../utils/palettes");
-const { API_BASE, requestJson, callFunction, uploadDataUrl } = require("../../utils/api");
+const { API_BASE, requestJson, callFunction, uploadDataChunks } = require("../../utils/api");
 const { sha256Bytes } = require("../../utils/sha256");
 const { base64ToBytes, arrayBufferToUtf8 } = require("../../utils/image");
 
@@ -829,12 +829,13 @@ Page({
 
     this.aiOptimizeInFlightKey = cacheKey;
     this.aiOptimizeInFlightPromise = (async () => {
-      // 大图先传云存储，避免 callFunction 入参超限
-      const imageFileID = await uploadDataUrl(imageBase64, "ai-input");
+      // 大图分块上传到云存储，避免 callFunction 入参超限 / 直传断流
+      const { uploadId: imageUploadId, ext: imageExt } = await uploadDataChunks(imageBase64, "ai-input");
       const result = await requestJson("/api/ai-optimize", {
         method: "POST",
         data: {
-          imageFileID,
+          imageUploadId,
+          imageExt,
           prompt,
           imageHash: this.sourceFingerprint,
           accessToken: this.accessToken || undefined,
@@ -1663,7 +1664,11 @@ Page({
       filename: filename.replace(/\.[^/.]+$/, ""),
       imageHash: this.sourceFingerprint,
     };
-    if (dataUrl) payload.dataFileID = await uploadDataUrl(dataUrl, "download");
+    if (dataUrl) {
+      const { uploadId: dataUploadId, ext: dataExt } = await uploadDataChunks(dataUrl, "download");
+      payload.dataUploadId = dataUploadId;
+      payload.dataExt = dataExt;
+    }
     if (text !== null && text !== undefined) payload.text = text;
     const result = await requestJson("/api/download-prepare", { method: "POST", data: payload });
     const fileID = result && result.fileID;

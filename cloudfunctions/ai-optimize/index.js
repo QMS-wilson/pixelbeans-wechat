@@ -14,6 +14,7 @@ const {
   appendLog,
   optimizeImage,
   uploadImageResult,
+  assembleUpload,
 } = require("./lib/card-lib.js");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
@@ -22,12 +23,16 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
-    const { imageBase64, imageFileID: inputFileID, prompt, imageHash, freeTrial, deviceId } = event || {};
-    // 大图走云存储：前端传 fileID，函数下载后转 base64
+    const { imageBase64, imageFileID: inputFileID, imageUploadId, prompt, imageHash, freeTrial, deviceId } = event || {};
+    // 大图走云存储：前端传 fileID 或分块 uploadId，函数下载后转 base64
     let resolvedImageBase64 = imageBase64;
     if (!resolvedImageBase64 && inputFileID) {
       const downloaded = await cloud.downloadFile({ fileID: inputFileID });
       resolvedImageBase64 = downloaded.fileContent.toString("base64");
+    }
+    if (!resolvedImageBase64 && imageUploadId) {
+      const assembled = await assembleUpload(imageUploadId);
+      resolvedImageBase64 = assembled.toString("base64");
     }
     if (!resolvedImageBase64) {
       return { error: "Missing imageBase64 parameter" };
