@@ -42,7 +42,7 @@ function requestJson(path, options = {}) {
 
 // 把 base64 数据写到本地临时文件并上传到云存储，返回 fileID。
 // 云函数入参有大小限制，大图不能直接塞进 callFunction。
-function uploadDataUrl(dataUrl, prefix = "upload") {
+function uploadDataUrl(dataUrl, prefix = "upload", retries = 3) {
   return new Promise((resolve, reject) => {
     const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
@@ -59,12 +59,22 @@ function uploadDataUrl(dataUrl, prefix = "upload") {
       reject(new Error(`写入临时文件失败：${error.message || ""}`));
       return;
     }
-    wx.cloud.uploadFile({
-      cloudPath: `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
-      filePath,
-      success: (res) => resolve(res.fileID),
-      fail: (err) => reject(new Error((err && err.errMsg) || "上传云存储失败")),
-    });
+    const uploadOnce = (attempt) => {
+      wx.cloud.uploadFile({
+        cloudPath: `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`,
+        filePath,
+        success: (res) => resolve(res.fileID),
+        fail: (err) => {
+          if (attempt < retries) {
+            setTimeout(() => uploadOnce(attempt + 1), 800 * attempt);
+          } else {
+            const detail = (err && err.errMsg) || (err && err.message) || "";
+            reject(new Error(`上传云存储失败（网络中断，已重试 ${retries} 次）：${detail}`));
+          }
+        },
+      });
+    };
+    uploadOnce(1);
   });
 }
 
