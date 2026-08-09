@@ -190,6 +190,22 @@
     </view>
   </view>
 
+  <view class="section-shell feedback-section">
+    <view class="membership-head">
+      <text class="membership-title">意见反馈</text>
+      <text class="membership-sub">欢迎提出建议；输入管理密码可进入卡密管理</text>
+    </view>
+    <textarea
+      class="feedback-input"
+      value="{{feedbackInput}}"
+      bindinput="onFeedbackInput"
+      placeholder="请输入您的意见或建议（也可在此输入管理密码进入管理页）"
+      maxlength="1000"
+      auto-height
+    />
+    <button class="action-btn primary feedback-submit" bindtap="submitFeedback">提交</button>
+  </view>
+
   <view class="overlay ai-overlay" wx:if="{{aiOverlayVisible}}">
     <view class="overlay-card">
       <view class="spinner"></view>

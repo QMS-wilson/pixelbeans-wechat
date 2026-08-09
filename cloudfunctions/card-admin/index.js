@@ -15,6 +15,10 @@ exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
     const { action, adminKey } = event || {};
+    // 校验管理密钥（供反馈页判断是否进入管理页，不返回密钥本身）
+    if (action === "verify") {
+      return { ok: requireAdmin(adminKey) };
+    }
     if (!requireAdmin(adminKey)) {
       return { error: "Forbidden", message: "管理员密钥无效。" };
     }

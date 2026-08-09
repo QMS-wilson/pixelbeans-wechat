@@ -1,5 +1,5 @@
 const { BEAD_PALETTES } = require("../../utils/palettes");
-const { API_BASE, requestJson } = require("../../utils/api");
+const { API_BASE, requestJson, callFunction } = require("../../utils/api");
 const { sha256Bytes } = require("../../utils/sha256");
 const { base64ToBytes, arrayBufferToUtf8 } = require("../../utils/image");
 
@@ -53,6 +53,7 @@ Page({
     aiPromptPresets: AI_PROMPT_PRESETS,
     aiPromptPresetIndex: 0,
     aiOptimizeOn: false,
+    feedbackInput: "",
     aiPrompt: DEFAULT_AI_PROMPT,
     editorTool: "brush",
     editorModeText: "画笔模式",
@@ -2024,5 +2025,40 @@ Page({
         this.refreshProjectList();
       },
     });
+  },
+
+  onFeedbackInput(e) {
+    this.setData({ feedbackInput: e.detail.value });
+  },
+
+  async submitFeedback() {
+    const content = (this.data.feedbackInput || "").trim();
+    if (!content) {
+      this.toast("请先输入内容");
+      return;
+    }
+    wx.showLoading({ title: "提交中", mask: true });
+    try {
+      // 先校验是否为管理密码（密钥只存在于云函数环境变量，不暴露到客户端）
+      const verify = await callFunction("card-admin", { action: "verify", adminKey: content });
+      if (verify && verify.ok) {
+        wx.setStorageSync("pixelbeansAdminKey", content);
+        wx.hideLoading();
+        wx.navigateTo({ url: "/pages/admin/admin" });
+        return;
+      }
+      // 普通意见反馈
+      const res = await callFunction("feedback", { content });
+      wx.hideLoading();
+      if (res && res.success) {
+        this.setData({ feedbackInput: "" });
+        wx.navigateTo({ url: "/pages/feedback-success/feedback-success" });
+      } else {
+        this.toast((res && res.message) || "提交失败，请重试");
+      }
+    } catch (error) {
+      wx.hideLoading();
+      this.toast((error && error.message) || "提交失败，请检查云函数是否已部署");
+    }
   },
 });
