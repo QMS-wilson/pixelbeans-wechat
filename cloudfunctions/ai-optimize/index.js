@@ -13,6 +13,7 @@ const {
   buildAccessPayload,
   appendLog,
   optimizeImage,
+  uploadImageResult,
 } = require("./lib/card-lib.js");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
@@ -42,11 +43,12 @@ exports.main = async (event) => {
         return { error: "AI optimization denied", message: "未识别到当前图片，请重新上传后重试。" };
       }
       const result = await optimizeImage(imageBase64, prompt);
+      const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
       consumeFreeTrial(store, deviceId, normalizedHash);
       consumeFreeTrial(store, `openid:${OPENID}`, normalizedHash);
       appendLog(store, OPENID, { type: "ai_free_trial", imageHash: normalizedHash, detail: "free trial ai optimize" });
       await writeStore(store);
-      return { success: true, ...result, freeTrialUsed: true };
+      return { success: true, imageFileID, taskId: result.taskId, freeTrialUsed: true };
     }
 
     if (!card) {
@@ -64,6 +66,7 @@ exports.main = async (event) => {
     }
 
     const result = await optimizeImage(imageBase64, prompt);
+    const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
     consumeCardAction(card, "ai");
     appendLog(store, OPENID, {
       type: "ai_optimize",
@@ -72,7 +75,7 @@ exports.main = async (event) => {
       detail: "ai optimize success",
     });
     await writeStore(store);
-    return { success: true, ...result, ...buildAccessPayload(card) };
+    return { success: true, imageFileID, taskId: result.taskId, ...buildAccessPayload(card) };
   } catch (error) {
     return { error: "AI optimization failed", message: error.message || "未知错误" };
   }

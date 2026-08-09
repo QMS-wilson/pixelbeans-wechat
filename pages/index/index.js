@@ -838,7 +838,7 @@ Page({
           ...(isTrial ? { freeTrial: true, deviceId: this.getDeviceId() } : {}),
         },
       });
-      if (!result || !result.success || !result.imageUrl) {
+      if (!result || !result.success || !result.imageFileID) {
         const error = new Error((result && (result.message || result.error)) || "AI 优化失败");
         error.status = result && result.statusCode;
         throw error;
@@ -849,7 +849,15 @@ Page({
         this.toast("免费 AI 体验已完成，后续使用需兑换卡密");
       }
       this.syncAccessState(result);
-      const optimizedImage = await this.loadImageSource(result.imageUrl);
+      // 云函数版：结果图已上传到云存储，前端下载后再载入
+      const downloadResult = await new Promise((resolve, reject) => {
+        wx.cloud.downloadFile({
+          fileID: result.imageFileID,
+          success: resolve,
+          fail: () => reject(new Error("AI 优化结果下载失败，请重试。")),
+        });
+      });
+      const optimizedImage = await this.loadImageSource(downloadResult.tempFilePath);
       this.aiOptimizeCacheKey = cacheKey;
       this.aiOptimizeCacheImage = optimizedImage;
       return optimizedImage;

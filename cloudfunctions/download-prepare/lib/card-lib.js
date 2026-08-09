@@ -511,6 +511,19 @@ async function prepareDownloadFile({ dataUrl, text, filename, ext }) {
   return { fileID: uploaded.fileID, filename: `${filename}${ext}`, mime, ext };
 }
 
+// 把 AI 结果图（data URL）上传到云存储，返回 fileID。
+// 云函数响应有 1MB 上限，base64 大图不能直接放返回值里。
+async function uploadImageResult(dataUrl, taskId) {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) throw new Error("AI 优化结果图片格式无效。");
+  const buffer = Buffer.from(match[2], "base64");
+  const mime = match[1] || "image/jpeg";
+  const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : ".jpg";
+  const cloudPath = `ai-results/${taskId || crypto.randomUUID()}${ext}`;
+  const uploaded = await cloud.uploadFile({ cloudPath, fileContent: buffer });
+  return uploaded.fileID;
+}
+
 module.exports = {
   cloud,
   db,
@@ -536,4 +549,5 @@ module.exports = {
   requireAdmin,
   optimizeImage,
   prepareDownloadFile,
+  uploadImageResult,
 };
