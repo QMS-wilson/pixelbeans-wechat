@@ -128,7 +128,13 @@
 <view class="editor-tool secondary {{historyEmpty ? 'disabled' : ''}}" bindtap="undoEdit">撤销</view>
 <view class="editor-tool secondary {{redoEmpty ? 'disabled' : ''}}" bindtap="redoEdit">重做</view>
 <view class="editor-tool secondary {{cellsEmpty ? 'disabled' : ''}}" bindtap="clearBoard">清空</view>
-<view class="editor-tool secondary {{cellsEmpty ? 'disabled' : ''}}" bindtap="clearSavedPattern">清除存档</view>
+<view class="editor-tool-wrap {{showClearHint ? 'clear-hint-glow' : ''}}">
+  <view class="editor-tool secondary {{cellsEmpty ? 'disabled' : ''}}" bindtap="clearSavedPattern">清除存档</view>
+  <view class="clear-hint" wx:if="{{showClearHint}}" bindtap="clearSavedPattern">
+    <view class="clear-hint-arrow"></view>
+    <text>清除当前图片重新上传</text>
+  </view>
+</view>
 <view class="editor-tool secondary {{cellsEmpty ? 'disabled' : ''}}" bindtap="openProjectLibrary">项目库</view>
         </view>
         <view class="editor-active">

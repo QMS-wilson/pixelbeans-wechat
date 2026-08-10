@@ -94,6 +94,7 @@ Page({
     redeemDisabled: false,
     overlayOpen: false,
     showAiHint: false,
+    showClearHint: false,
   },
 
   onLoad() {
@@ -670,6 +671,7 @@ Page({
         uploadTitle: "图片已载入",
         uploadHint: `${image.width} x ${image.height}`,
         showAiHint: true,
+        showClearHint: false,
       });
       this.processCurrentImage();
     };
@@ -702,6 +704,7 @@ Page({
     this.counts = {};
     this.setData({
       sourceType: "blank",
+      showClearHint: false,
       uploadTitle: "已创建空白图纸",
       uploadHint: `${cols} x ${rows}，适合作为后续手工绘制基础`,
       canvasHint: "空白图纸已创建，现在可以直接选择颜色并在网格上手绘。",
@@ -758,6 +761,7 @@ Page({
     this.renderCanvas();
     this.setData({
       sourceType: "blank",
+      showClearHint: false,
       uploadTitle: "示例图纸已载入",
       uploadHint: `${size} x ${size}，可直接开始手绘或导出`,
       canvasHint: `已载入示例图纸（${size} x ${size}），可以直接开始手绘或导出。`,
@@ -2062,6 +2066,7 @@ Page({
       canvasHint: "已恢复上次保存的图纸方案，可直接继续编辑或上传新图覆盖。",
       statusText: "已恢复存档",
       statusState: "ready",
+      showClearHint: true,
     });
     // 恢复上次选中的画笔颜色，避免画笔颜色被重置后“点了没反应”
     if (payload.selectedColorCode && this.getActivePalette().some((color) => color.code === payload.selectedColorCode)) {
@@ -2130,7 +2135,7 @@ Page({
       }
     });
     this.toast("已清除本地存档");
-    this.setData({ statusText: "已清除本地存档", statusState: "idle" });
+    this.setData({ statusText: "已清除本地存档", statusState: "idle", showClearHint: false });
     this.updateEditorActions();
   },
 
@@ -2381,6 +2386,7 @@ Page({
     this.schedulePatternSave();
     this.setData({
       sourceType: this.sourceType,
+      showClearHint: false,
       canvasHint: `已载入项目「${loaded.name || "未命名项目"}」。`,
       statusText: "项目已载入",
       statusState: "ready",
