@@ -2087,7 +2087,6 @@ Page({
 
   // 异步从本地文件恢复存档时缓存的原图/预览图
   restoreCachedImages(payload) {
-    const fs = wx.getFileSystemManager();
     const createImage = () =>
       this.preview && this.preview.canvas && this.preview.canvas.createImage
         ? this.preview.canvas.createImage()
@@ -2095,29 +2094,43 @@ Page({
     const loadPath = (filePath) =>
       new Promise((resolve) => {
         if (!filePath) return resolve(null);
-        try {
-          fs.readFile({
-            filePath,
-            encoding: "base64",
-            success: (res) => {
-              try {
-                const image = createImage();
-                image.onload = () => resolve(image);
-                image.onerror = () => resolve(null);
-                image.src = `data:image/png;base64,${res.data}`;
-              } catch {
-                resolve(null);
-              }
-            },
-            fail: () => resolve(null),
-          });
-        } catch {
-          resolve(null);
-        }
+        const image = createImage();
+        image.onload = () => resolve(image);
+        image.onerror = () => {
+          // 直接路径加载失败：回退为读取文件后用 dataURL 再试一次
+          try {
+            wx.getFileSystemManager().readFile({
+              filePath,
+              encoding: "base64",
+              success: (res) => {
+                try {
+                  const retry = createImage();
+                  retry.onload = () => resolve(retry);
+                  retry.onerror = () => resolve(null);
+                  retry.src = `data:image/png;base64,${res.data}`;
+                } catch {
+                  resolve(null);
+                }
+              },
+              fail: () => resolve(null),
+            });
+          } catch {
+            resolve(null);
+          }
+        };
+        image.src = filePath;
       });
     Promise.all([loadPath(payload.originalImagePath), loadPath(payload.previewImagePath)]).then(([original, preview]) => {
-      if (original) this.originalImage = original;
-      if (preview) this.image = preview;
+      // 若用户已清除存档/重新上传，放弃本次异步恢复结果，避免覆盖新状态
+      if (this.sourceType !== "saved" || !this.cells.length) return;
+      if (original) {
+        this.originalImage = original;
+        this._cachedOriginalRef = original;
+      }
+      if (preview) {
+        this.image = preview;
+        this._cachedPreviewRef = preview;
+      }
       if (original || preview) {
         this.updateComparePreview(this.originalImage, this.image || this.originalImage);
         console.log("[draft] cached images restored", { hasOriginal: !!original, hasPreview: !!preview });
