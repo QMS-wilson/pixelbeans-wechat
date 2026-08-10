@@ -606,12 +606,13 @@
 }
 
 .project-save-btn {
-  min-height: 60rpx;
-  height: 60rpx;
+  min-height: 56rpx;
+  height: 56rpx;
+  min-width: 128rpx;
   margin: 0;
-  padding: 0 28rpx;
-  border-radius: 14rpx;
-  font-size: 24rpx;
+  padding: 0 16rpx;
+  border-radius: 12rpx;
+  font-size: 22rpx;
   font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
