@@ -1999,7 +1999,7 @@ Page({
     this.updateEditorActions();
   },
 
-  // ---------- 项目库：多图纸存档 ----------
+    // ---------- 项目库：多图纸存档（云端按 openid 绑定，清除缓存后仍可恢复） ----------
   readProjects() {
     try {
       const raw = wx.getStorageSync(PROJECTS_STORAGE_KEY);
@@ -2017,18 +2017,126 @@ Page({
     }
   },
 
-  refreshProjectList() {
-    const projects = this.readProjects().map((project) => ({
+  applyProjectList(projects) {
+    const list = (projects || []).map((project) => ({
       ...project,
       savedAtText: project.savedAt ? new Date(project.savedAt).toLocaleString() : "",
     }));
-    this.setData({ projects });
+    this.setData({ projects: list });
+  },
+
+  // 项目 -> 元数据（不含 cells，供云端 projects 集合保存）
+  projectToMeta(project) {
+    return {
+      id: project.id,
+      name: project.name,
+      savedAt: project.savedAt,
+      cols: project.cols,
+      rows: project.rows,
+      paletteIndex: project.paletteIndex,
+      gridSize: project.gridSize,
+      mergeLevel: project.mergeLevel,
+      gridLineOn: project.gridLineOn,
+      sourceFingerprint: project.sourceFingerprint || "",
+      sourceType: project.sourceType || "blank",
+    };
+  },
+
+  // 把项目 JSON 写入本地临时文件，返回文件路径（供 wx.cloud.uploadFile 使用）
+  writeProjectTempFile(project) {
+    const fs = wx.getFileSystemManager();
+    const filePath = `${wx.env.USER_DATA_PATH}/project-${project.id}.json`;
+    fs.writeFileSync(filePath, JSON.stringify(project), "utf8");
+    return filePath;
+  },
+
+  // 上传图纸 JSON 到云存储，并在 projects 集合写入元数据；返回 { ...meta, fileID }
+  async uploadProjectToCloud(project) {
+    const filePath = this.writeProjectTempFile(project);
+    const upload = await new Promise((resolve, reject) => {
+      wx.cloud.uploadFile({
+        cloudPath: `projects/${project.id}.json`,
+        filePath,
+        success: resolve,
+        fail: (err) => reject(new Error((err && err.errMsg) || "云存储上传失败")),
+      });
+    });
+    const meta = this.projectToMeta(project);
+    const res = await callFunction("project-store", {
+      action: "saveMeta",
+      ...meta,
+      fileID: upload.fileID,
+    });
+    if (!res || !res.success) {
+      throw new Error((res && res.message) || "项目元数据保存失败");
+    }
+    return { ...meta, fileID: upload.fileID };
+  },
+
+  // 从云端下载图纸 JSON 并解析出 cells
+  downloadProjectCells(project) {
+    return new Promise((resolve, reject) => {
+      wx.cloud.downloadFile({
+        fileID: project.fileID,
+        success: (dl) => {
+          wx.getFileSystemManager().readFile({
+            filePath: dl.tempFilePath,
+            encoding: "utf8",
+            success: (res) => {
+              try {
+                const data = JSON.parse(res.data);
+                if (!Array.isArray(data.cells) || !data.cells.length) {
+                  reject(new Error("图纸数据格式异常"));
+                  return;
+                }
+                resolve(data.cells);
+              } catch {
+                reject(new Error("图纸数据解析失败"));
+              }
+            },
+            fail: () => reject(new Error("读取云端图纸失败")),
+          });
+        },
+        fail: (err) => reject(new Error((err && err.errMsg) || "下载云端图纸失败")),
+      });
+    });
+  },
+
+  // 刷新项目列表：先展示本地缓存，再拉取云端列表合并；仅存在于本地的旧项目自动同步上云
+  async refreshProjectList() {
+    this.applyProjectList(this.readProjects());
+    try {
+      const res = await callFunction("project-store", { action: "list" });
+      if (!res || !res.success) throw new Error((res && res.message) || "云端列表获取失败");
+      const cloudProjects = res.projects || [];
+      const cloudIds = new Set(cloudProjects.map((p) => p && p.id));
+      const localProjects = this.readProjects();
+      const localOnly = localProjects.filter((p) => p && !cloudIds.has(p.id));
+      this.writeProjects([...cloudProjects, ...localOnly]);
+      this.applyProjectList([...cloudProjects, ...localOnly]);
+      if (localOnly.length) {
+        this.toast(`正在同步 ${localOnly.length} 个本地项目到云端…`);
+        for (const project of localOnly) {
+          try {
+            const uploaded = await this.uploadProjectToCloud(project);
+            project.fileID = uploaded.fileID;
+          } catch (error) {
+            console.error("[project-store] migrate failed", { id: project.id, error: error && error.message });
+          }
+        }
+        this.writeProjects(localProjects);
+        await this.refreshProjectList();
+      }
+    } catch (error) {
+      console.error("[project-store] list failed, use local cache", error);
+      this.applyProjectList(this.readProjects());
+    }
   },
 
   openProjectLibrary() {
-    this.refreshProjectList();
     this.setData({ projectModalVisible: true });
     this.syncOverlayState();
+    this.refreshProjectList();
   },
 
   closeProjectLibrary() {
@@ -2040,15 +2148,14 @@ Page({
     this.setData({ projectName: e.detail.value });
   },
 
-  saveProjectFromLibrary() {
+  async saveProjectFromLibrary() {
     if (!this.cells.length) {
       this.openErrorOverlay("当前没有图纸可保存，请先生成图纸。");
       return;
     }
     const name = (this.data.projectName || "").trim() || `项目 ${new Date().toLocaleDateString()}`;
-    const projects = this.readProjects();
-    projects.push({
-      id: `p${Date.now().toString(36)}`,
+    const project = {
+      id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       name,
       savedAt: Date.now(),
       cols: this.cols,
@@ -2060,35 +2167,65 @@ Page({
       sourceFingerprint: this.sourceFingerprint || "",
       sourceType: this.sourceType || "blank",
       cells: this.cells,
-    });
-    this.writeProjects(projects);
-    this.setData({ projectName: "" });
-    this.refreshProjectList();
-    this.toast(`已保存项目「${name}」`);
+    };
+    wx.showLoading({ title: "保存中", mask: true });
+    try {
+      const uploaded = await this.uploadProjectToCloud(project);
+      const projects = this.readProjects().filter((p) => p.id !== project.id);
+      projects.push({ ...project, fileID: uploaded.fileID });
+      this.writeProjects(projects);
+      wx.hideLoading();
+      this.setData({ projectName: "" });
+      this.applyProjectList(projects);
+      this.toast(`已保存项目「${name}」。`);
+    } catch (error) {
+      wx.hideLoading();
+      this.openErrorOverlay(`保存失败：${error.message || "请稍后重试"}`);
+    }
   },
 
-  loadProjectFromLibrary(e) {
+  async loadProjectFromLibrary(e) {
     const index = Number(e.currentTarget.dataset.index);
     const projects = this.readProjects();
     const project = projects[index];
-    if (!project || !Array.isArray(project.cells) || !project.cells.length) return;
-    const paletteKey = PALETTE_KEYS[project.paletteIndex];
+    if (!project) return;
+    let loaded = project;
+    if (!Array.isArray(project.cells) || !project.cells.length) {
+      if (!project.fileID) {
+        this.openErrorOverlay("该项目数据不完整，无法加载。");
+        return;
+      }
+      wx.showLoading({ title: "加载中", mask: true });
+      try {
+        const cells = await this.downloadProjectCells(project);
+        loaded = { ...project, cells };
+        projects[index] = loaded;
+        this.writeProjects(projects);
+      } catch (error) {
+        wx.hideLoading();
+        this.openErrorOverlay(`加载失败：${error.message || "请稍后重试"}`);
+        return;
+      }
+      wx.hideLoading();
+    }
+    if (!Array.isArray(loaded.cells) || !loaded.cells.length) return;
+    const paletteKey = PALETTE_KEYS[loaded.paletteIndex];
     if (!paletteKey) {
       this.openErrorOverlay("该项目使用的色板不存在，无法载入。");
       return;
     }
     this.setData({
-      paletteIndex: project.paletteIndex,
-      paletteLabel: PALETTE_OPTIONS[project.paletteIndex] ? PALETTE_OPTIONS[project.paletteIndex].label : this.data.paletteLabel,
-      gridSize: project.gridSize || this.data.gridSize,
-      mergeLevel: project.mergeLevel || this.data.mergeLevel,
-      gridLineOn: project.gridLineOn !== undefined ? project.gridLineOn : this.data.gridLineOn,
+      paletteIndex: loaded.paletteIndex,
+      paletteLabel: PALETTE_OPTIONS[loaded.paletteIndex] ? PALETTE_OPTIONS[loaded.paletteIndex].label : this.data.paletteLabel,
+      gridSize: loaded.gridSize || this.data.gridSize,
+      mergeLevel: loaded.mergeLevel || this.data.mergeLevel,
+      gridLineOn: loaded.gridLineOn !== undefined ? loaded.gridLineOn : this.data.gridLineOn,
     });
-    this.cells = project.cells;
-    this.cols = project.cols || (project.cells[0] || []).length;
-    this.rows = project.rows || project.cells.length;
-    this.sourceFingerprint = project.sourceFingerprint || "";
-    this.sourceType = project.sourceType || "blank";
+    this.cells = loaded.cells;
+    this.cols = loaded.cols || (loaded.cells[0] || []).length;
+    this.rows = loaded.rows || loaded.cells.length;
+    this.sourceFingerprint = loaded.sourceFingerprint || "";
+    this.sourceType = loaded.sourceType || "blank";
     this.originalImage = null;
     this.image = null;
     this.history = [];
@@ -2100,7 +2237,7 @@ Page({
     this.schedulePatternSave();
     this.setData({
       sourceType: this.sourceType,
-      canvasHint: `已载入项目「${project.name || "未命名项目"}」。`,
+      canvasHint: `已载入项目「${loaded.name || "未命名项目"}」。`,
       statusText: "项目已载入",
       statusState: "ready",
       projectModalVisible: false,
@@ -2117,15 +2254,22 @@ Page({
       title: "删除项目",
       content: `确定删除项目「${project.name || "未命名项目"}」吗？`,
       confirmColor: "#e11d48",
-      success: (res) => {
+      success: async (res) => {
         if (!res.confirm) return;
         projects.splice(index, 1);
         this.writeProjects(projects);
-        this.refreshProjectList();
+        this.applyProjectList(projects);
+        if (project.fileID) {
+          try {
+            await callFunction("project-store", { action: "delete", id: project.id });
+          } catch (error) {
+            console.error("[project-store] delete failed", error);
+            this.toast("云端删除失败，请稍后重试");
+          }
+        }
       },
     });
   },
-
   onFeedbackInput(e) {
     this.setData({ feedbackInput: e.detail.value });
   },

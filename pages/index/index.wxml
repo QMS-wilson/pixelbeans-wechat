@@ -304,7 +304,7 @@
         <view class="project-item" wx:for="{{projects}}" wx:key="id">
           <view class="project-item-info">
             <text class="project-item-name">{{item.name}}</text>
-            <text class="project-item-meta">{{item.cols}}x{{item.rows}} · {{item.savedAtText}}</text>
+            <text class="project-item-meta">{{item.fileID ? '云端' : '仅本地'}} · {{item.cols}}x{{item.rows}} · {{item.savedAtText}}</text>
           </view>
           <view class="project-item-actions">
             <text class="project-action" data-index="{{index}}" bindtap="loadProjectFromLibrary">载入</text>
