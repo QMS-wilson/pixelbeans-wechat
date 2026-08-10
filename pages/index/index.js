@@ -120,6 +120,8 @@ Page({
     this.processToken = 0;
     this.isDrawing = false;
     this.selectedColorCode = "";
+    this._cachedOriginalRef = null;
+    this._cachedPreviewRef = null;
     this.confirmedAiPrompt = DEFAULT_AI_PROMPT;
     this.aiOptimizeCacheKey = "";
     this.aiOptimizeCacheImage = null;
@@ -1086,7 +1088,7 @@ Page({
   // ---------- 主流程 ----------
   async processCurrentImage() {
     const token = (this.processToken += 1);
-    const usesAi = Boolean(this.data.aiOptimizeOn);
+    const usesAi = Boolean(this.data.aiOptimizeOn) && this.sourceType !== "saved";
     this.clearError();
     this.history = [];
     this.redoHistory = [];
@@ -1974,11 +1976,34 @@ Page({
   },
 
   // ---------- 本地存档 ----------
+  // 把图片对象缩放后序列化为本地文件，返回文件路径（失败返回空串）
+  cacheImageFile(prefix, image) {
+    if (!image || !image.width || !image.height) return "";
+    try {
+      const maxSide = 1600;
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+      const canvas = this.createOffscreen(width, height);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(image, 0, 0, width, height);
+      if (typeof canvas.toDataURL !== "function") return "";
+      const dataUrl = canvas.toDataURL("image/png");
+      const base64 = String(dataUrl || "").split(",")[1];
+      if (!base64) return "";
+      const filePath = `${wx.env.USER_DATA_PATH}/${prefix}.png`;
+      wx.getFileSystemManager().writeFileSync(filePath, base64, "base64");
+      return filePath;
+    } catch (error) {
+      console.warn("[draft] cache image failed", { prefix, error: error && error.message });
+      return "";
+    }
+  },
   savePatternToStorage() {
     if (!this.cells.length) return;
     try {
-      wx.setStorageSync(PATTERN_STORAGE_KEY, {
-        version: 1,
+      const payload = {
+        version: 2,
         savedAt: Date.now(),
         cells: this.cells,
         cols: this.cols,
@@ -1989,7 +2014,18 @@ Page({
         gridLineOn: this.data.gridLineOn,
         sourceFingerprint: this.sourceFingerprint || "",
         selectedColorCode: this.selectedColorCode || "",
-      });
+      };
+      // 缓存原图：恢复后调整横向格数/颜色合并仍以原图为基准，避免越调越模糊
+      if (this.originalImage && this.originalImage !== this._cachedOriginalRef) {
+        payload.originalImagePath = this.cacheImageFile("draft-original", this.originalImage);
+        this._cachedOriginalRef = this.originalImage;
+      }
+      // 缓存预处理预览图（与原图不同才单独保存）
+      if (this.image && this.image !== this.originalImage && this.image !== this._cachedPreviewRef) {
+        payload.previewImagePath = this.cacheImageFile("draft-preview", this.image);
+        this._cachedPreviewRef = this.image;
+      }
+      wx.setStorageSync(PATTERN_STORAGE_KEY, payload);
     } catch {
       // 存储空间不足时静默失败
     }
@@ -2038,12 +2074,61 @@ Page({
     this.renderCanvas();
     this.syncUiSummary();
     this.updateEditorActions();
+    // 异步恢复原图/预览图，供继续无损调整格数
+    this.restoreCachedImages(payload);
     this.toast("已恢复上次未完成的图纸");
     return true;
   },
 
+  // 异步从本地文件恢复存档时缓存的原图/预览图
+  restoreCachedImages(payload) {
+    const fs = wx.getFileSystemManager();
+    const createImage = () =>
+      this.preview && this.preview.canvas && this.preview.canvas.createImage
+        ? this.preview.canvas.createImage()
+        : wx.createImage();
+    const loadPath = (filePath) =>
+      new Promise((resolve) => {
+        if (!filePath) return resolve(null);
+        try {
+          fs.readFile({
+            filePath,
+            encoding: "base64",
+            success: (res) => {
+              try {
+                const image = createImage();
+                image.onload = () => resolve(image);
+                image.onerror = () => resolve(null);
+                image.src = `data:image/png;base64,${res.data}`;
+              } catch {
+                resolve(null);
+              }
+            },
+            fail: () => resolve(null),
+          });
+        } catch {
+          resolve(null);
+        }
+      });
+    Promise.all([loadPath(payload.originalImagePath), loadPath(payload.previewImagePath)]).then(([original, preview]) => {
+      if (original) this.originalImage = original;
+      if (preview) this.image = preview;
+      if (original || preview) {
+        this.updateComparePreview(this.originalImage, this.image || this.originalImage);
+        console.log("[draft] cached images restored", { hasOriginal: !!original, hasPreview: !!preview });
+      }
+    });
+  },
   clearSavedPattern() {
     wx.removeStorageSync(PATTERN_STORAGE_KEY);
+    const fs = wx.getFileSystemManager();
+    ["draft-original.png", "draft-preview.png"].forEach((name) => {
+      try {
+        fs.unlinkSync(`${wx.env.USER_DATA_PATH}/${name}`);
+      } catch {
+        // 文件不存在时忽略
+      }
+    });
     this.toast("已清除本地存档");
     this.setData({ statusText: "已清除本地存档", statusState: "idle" });
     this.updateEditorActions();
