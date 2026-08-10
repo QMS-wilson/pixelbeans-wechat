@@ -1284,7 +1284,7 @@ Page({
       this.processedThumb.width,
       this.processedThumb.height,
     );
-    const label = this.data.aiOptimizeOn ? "预处理后" : "当前生成源";
+    const label = this.data.aiOptimizeOn ? "预处理后" : "预处理图";
     this.setData({ processedPreviewLabel: label });
   },
 
