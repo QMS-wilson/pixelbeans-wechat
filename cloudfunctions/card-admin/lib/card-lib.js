@@ -543,6 +543,9 @@ async function uploadImageResult(dataUrl, taskId) {
 // Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
 // collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
 // Query by uploadId, sort by index, then download and merge the base64 parts.
+// Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
+// collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
+// Query by uploadId, sort by index, then download and merge the base64 parts.
 async function assembleUpload(uploadId) {
   const coll = db.collection("chunks");
   const pageSize = 1000;
@@ -564,12 +567,27 @@ async function assembleUpload(uploadId) {
   if (rows.length !== total || rows.some((p) => !p || !p.fileID)) {
     throw new Error("分块上传不完整，请重试。");
   }
-  let base64 = "";
-  for (const part of rows) {
-    const downloaded = await cloud.downloadFile({ fileID: part.fileID });
-    base64 += downloaded.fileContent.toString("utf8");
+
+  // Download all chunk files with limited concurrency, then merge in order.
+  const parts = new Array(rows.length);
+  const CONCURRENCY = 8;
+  let cursor = 0;
+  const workers = [];
+  for (let w = 0; w < Math.min(CONCURRENCY, rows.length); w += 1) {
+    workers.push(
+      (async () => {
+        while (cursor < rows.length) {
+          const i = cursor;
+          cursor += 1;
+          const downloaded = await cloud.downloadFile({ fileID: rows[i].fileID });
+          parts[i] = downloaded.fileContent.toString("utf8");
+        }
+      })(),
+    );
   }
-  return Buffer.from(base64, "base64");
+  await Promise.all(workers);
+
+  return Buffer.from(parts.join(""), "base64");
 }
 
 module.exports = {
