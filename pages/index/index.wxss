@@ -265,9 +265,40 @@
 
 .compare-panel {
   display: flex;
+  flex-direction: column;
+  padding: 8rpx 24rpx 20rpx;
+}
+
+.compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8rpx 4rpx;
+}
+
+.compare-header-title {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #334155;
+}
+
+.compare-arrow {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+.compare-arrow.open {
+  transform: rotate(180deg);
+}
+
+.compare-body {
+  display: flex;
   gap: 20rpx;
   justify-content: center;
-  padding: 4rpx 24rpx 28rpx;
+}
+
+.compare-body.collapsed {
+  display: none;
 }
 
 .compare-item {

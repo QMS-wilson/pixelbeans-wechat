@@ -75,6 +75,7 @@ Page({
     totalBeads: "0 颗",
     paletteList: [],
     processedPreviewLabel: "预处理后",
+    compareExpanded: true,
     aiOverlayVisible: false,
     aiWaitText: "",
     preprocessVisible: false,
@@ -1270,6 +1271,10 @@ Page({
     this.applyPreviewProtection(context, width, height);
   },
 
+  // 展开/折叠“原图与预处理图”对比区（默认展开；折叠用 class 隐藏，避免销毁 canvas）
+  toggleComparePanel() {
+    this.setData({ compareExpanded: !this.data.compareExpanded });
+  },
   updateComparePreview(originalSource = null, processedSource = null) {
     if (!this.sourceThumb || !this.processedThumb) return;
     this.drawPreviewThumbnail(
