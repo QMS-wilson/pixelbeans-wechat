@@ -135,7 +135,7 @@
     <text>清除当前图片重新上传</text>
   </view>
 </view>
-<view class="editor-tool secondary {{cellsEmpty ? 'disabled' : ''}}" bindtap="openProjectLibrary">项目库</view>
+<view class="editor-tool secondary" bindtap="openProjectLibrary">项目库</view>
         </view>
         <view class="editor-active">
           <view class="active-chip" style="background: {{activeColorHex}}"></view>
