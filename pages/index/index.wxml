@@ -225,7 +225,7 @@
       <text class="overlay-sub">{{exportStageText}}</text>
       <view class="progress-track">
         <view wx:if="{{exportProgressIndeterminate}}" class="progress-slider"></view>
-        <view wx:else class="progress-fill" style="width: {{exportProgressPercent}}%;"></view>
+        <progress wx:else class="progress-bar" percent="{{exportProgressPercent}}" stroke-width="6" activeColor="#3157d5" backgroundColor="#eef2f7" border-radius="8" active />
       </view>
       <text class="progress-hint">大图导出需要一些时间，请勿关闭页面</text>
     </view>
