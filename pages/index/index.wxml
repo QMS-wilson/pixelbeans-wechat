@@ -14,9 +14,8 @@
     <view class="tool-topbar">
       <view class="tool-title">Pattern Lab</view>
       <view class="tool-actions">
-        <view class="topbar-btn" bindtap="chooseImage">上传图片</view>
+        <view class="topbar-btn" wx:if="{{sourceType !== 'none'}}" bindtap="chooseImage">更换图片</view>
         <view class="topbar-btn" bindtap="createBlankBoard">空白画布</view>
-        <view class="topbar-btn" bindtap="loadDemoPattern">示例图纸</view>
         <view class="topbar-ai-wrap {{showAiHint ? 'ai-hint-glow' : ''}}">
           <view class="topbar-btn" bindtap="togglePreprocessPanel">AI优化</view>
           <view class="ai-hint" wx:if="{{showAiHint}}" bindtap="onAiHintTap">
