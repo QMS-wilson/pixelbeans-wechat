@@ -76,6 +76,8 @@ Page({
     paletteList: [],
     processedPreviewLabel: "预处理后",
     compareExpanded: true,
+    compareExpanding: false,
+    compareCollapsing: false,
     aiOverlayVisible: false,
     aiWaitText: "",
     preprocessVisible: false,
@@ -1272,8 +1274,20 @@ Page({
   },
 
   // 展开/折叠“原图与预处理图”对比区（默认展开；折叠用 class 隐藏，避免销毁 canvas）
+  // 展开/收起时播放 0.2s 上下滑动+淡入淡出动画
   toggleComparePanel() {
-    this.setData({ compareExpanded: !this.data.compareExpanded });
+    clearTimeout(this._compareToggleTimer);
+    if (this.data.compareExpanded) {
+      this.setData({ compareExpanding: false, compareCollapsing: true });
+      this._compareToggleTimer = setTimeout(() => {
+        this.setData({ compareExpanded: false, compareCollapsing: false });
+      }, 200);
+    } else {
+      this.setData({ compareExpanded: true, compareCollapsing: false, compareExpanding: true });
+      this._compareToggleTimer = setTimeout(() => {
+        this.setData({ compareExpanding: false });
+      }, 240);
+    }
   },
   updateComparePreview(originalSource = null, processedSource = null) {
     if (!this.sourceThumb || !this.processedThumb) return;

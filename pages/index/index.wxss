@@ -283,8 +283,10 @@
 }
 
 .compare-arrow {
-  font-size: 24rpx;
-  color: #94a3b8;
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #475569;
+  line-height: 1;
 }
 
 .compare-arrow.open {
@@ -297,8 +299,38 @@
   justify-content: center;
 }
 
+.compare-body.expanding {
+  animation: compare-in 0.22s ease-out;
+}
+
+.compare-body.collapsing {
+  animation: compare-out 0.2s ease-in forwards;
+}
+
 .compare-body.collapsed {
   display: none;
+}
+
+@keyframes compare-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12rpx);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes compare-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-12rpx);
+  }
 }
 
 .compare-item {
@@ -328,6 +360,10 @@
 .control-row {
   padding: 16rpx 0;
   border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.control-row.slider-row {
+  padding: 8rpx 0;
 }
 
 .control-head {

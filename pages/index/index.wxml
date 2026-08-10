@@ -54,7 +54,7 @@
         <text class="compare-header-title">原图与预处理图</text>
         <text class="compare-arrow {{compareExpanded ? 'open' : ''}}">▾</text>
       </view>
-      <view class="compare-body {{compareExpanded ? '' : 'collapsed'}}">
+      <view class="compare-body {{compareExpanded ? '' : 'collapsed'}} {{compareExpanding ? 'expanding' : ''}} {{compareCollapsing ? 'collapsing' : ''}}">
         <view class="compare-item">
           <text class="compare-label">原图</text>
           <canvas type="2d" id="sourcePreviewCanvas" class="thumb-canvas"></canvas>
@@ -67,7 +67,7 @@
     </view>
 
     <view class="control-panel">
-      <view class="control-row">
+      <view class="control-row slider-row">
         <view class="control-head">
           <text>横向格数</text>
           <text class="control-value">{{gridSize}}</text>
@@ -86,7 +86,7 @@
         />
       </view>
 
-      <view class="control-row">
+      <view class="control-row slider-row">
         <view class="control-head">
           <text>颜色合并</text>
           <text class="control-value">{{mergeLevel}}</text>
