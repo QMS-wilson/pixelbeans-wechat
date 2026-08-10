@@ -32,16 +32,17 @@ function isCollectionNotExist(error) {
 
 // Chunked upload: the client splits large base64 data into small pieces and
 // calls this function once per piece. Each piece is written to cloud storage
-// (chunks/<uploadId>/<index>.b64) and its fileID is recorded in the chunks
-// collection (doc _id = uploadId) so the server can reassemble the file later.
+// (chunks/<uploadId>/<index>.b64) and its fileID is recorded in a dedicated
+// chunk doc (chunks collection, doc id = <uploadId>__<index>). doc.set()
+// creates the doc when missing and is safe for retries and concurrency.
 exports.main = async (event) => {
   try {
     const { uploadId, index, total, data } = event || {};
     if (!uploadId || typeof index !== "number" || !total || typeof data !== "string" || !data) {
-      return { error: "Invalid chunk", message: "Chunk parameters incomplete." };
+      return { error: "Invalid chunk", message: "分块参数不完整。" };
     }
     if (data.length > 600 * 1024) {
-      return { error: "Chunk too large", message: "Single chunk exceeds 600KB." };
+      return { error: "Chunk too large", message: "单块过大（超过600KB）。" };
     }
 
     // Make sure the chunks collection exists before any write.
@@ -51,44 +52,24 @@ exports.main = async (event) => {
       cloudPath: `chunks/${uploadId}/${index}.b64`,
       fileContent: data,
     });
-    const fileID = uploaded.fileID;
 
     const coll = db.collection(CHUNKS_COLLECTION);
-    const doc = coll.doc(uploadId);
-
-    const writePart = async () => {
-      try {
-        await doc.update({ data: { [`parts.${index}`]: fileID, total } });
-      } catch (error) {
-        if (isCollectionNotExist(error)) {
-          // Collection was missing: create it, then add the document.
-          await ensureCollection(CHUNKS_COLLECTION);
-          await coll.add({
-            _id: uploadId,
-            parts: { [index]: fileID },
-            total,
-            createdAt: new Date().toISOString(),
-          });
-          return;
-        }
-        // Document does not exist yet: create it.
-        await coll.add({
-          _id: uploadId,
-          parts: { [index]: fileID },
-          total,
-          createdAt: new Date().toISOString(),
-        });
-      }
+    const chunkId = `${uploadId}__${index}`;
+    const record = {
+      uploadId,
+      index,
+      total,
+      fileID: uploaded.fileID,
+      createdAt: new Date().toISOString(),
     };
-
     try {
-      await writePart();
+      await coll.doc(chunkId).set({ data: record });
     } catch (error) {
-      // A concurrent chunk created the doc first: fall back to update.
-      try {
-        await doc.update({ data: { [`parts.${index}`]: fileID, total } });
-      } catch (error2) {
-        throw error2;
+      if (isCollectionNotExist(error)) {
+        await ensureCollection(CHUNKS_COLLECTION);
+        await coll.doc(chunkId).set({ data: record });
+      } else {
+        throw error;
       }
     }
 
@@ -96,7 +77,7 @@ exports.main = async (event) => {
   } catch (error) {
     return {
       error: "Chunk upload failed",
-      message: (error && error.message) || "Chunk upload failed",
+      message: (error && error.message) || "分块上传失败",
     };
   }
 };

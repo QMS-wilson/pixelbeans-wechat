@@ -540,17 +540,33 @@ async function uploadImageResult(dataUrl, taskId) {
 }
 
 // 按 uploadId 合并分块上传的大文件（chunks 集合里记录的各块 fileID）
+// Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
+// collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
+// Query by uploadId, sort by index, then download and merge the base64 parts.
 async function assembleUpload(uploadId) {
-  const res = await db.collection("chunks").doc(uploadId).get();
-  const parts = (res.data && res.data.parts) || {};
-  const total = Number((res.data && res.data.total) || 0) || Object.keys(parts).length;
-  const keys = Object.keys(parts).sort((a, b) => Number(a) - Number(b));
-  if (!keys.length || keys.length !== total) {
+  const coll = db.collection("chunks");
+  const pageSize = 1000;
+  let rows = [];
+  let skip = 0;
+  for (;;) {
+    const res = await coll.where({ uploadId }).skip(skip).limit(pageSize).get();
+    const page = res.data || [];
+    rows = rows.concat(page);
+    if (page.length < pageSize) break;
+    skip += pageSize;
+    if (rows.length > 10000) break;
+  }
+  if (!rows.length) {
+    throw new Error("分块上传记录不存在，请重新导出。");
+  }
+  rows.sort((a, b) => Number(a.index) - Number(b.index));
+  const total = Number((rows[0] && rows[0].total) || 0) || rows.length;
+  if (rows.length !== total || rows.some((p) => !p || !p.fileID)) {
     throw new Error("分块上传不完整，请重试。");
   }
   let base64 = "";
-  for (const key of keys) {
-    const downloaded = await cloud.downloadFile({ fileID: parts[key] });
+  for (const part of rows) {
+    const downloaded = await cloud.downloadFile({ fileID: part.fileID });
     base64 += downloaded.fileContent.toString("utf8");
   }
   return Buffer.from(base64, "base64");
