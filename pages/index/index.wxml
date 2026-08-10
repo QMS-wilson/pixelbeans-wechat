@@ -216,6 +216,7 @@
     </view>
   </view>
 
+  <!-- 导出进度浮层：indeterminate 时显示转圈+滑动条动画（服务端处理中），否则显示百分比进度条 -->
   <view class="overlay export-progress-overlay" wx:if="{{exportProgressVisible}}">
     <view class="overlay-card export-progress-card">
       <view class="spinner" wx:if="{{exportProgressIndeterminate}}"></view>

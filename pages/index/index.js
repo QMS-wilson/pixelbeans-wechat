@@ -63,7 +63,11 @@ Page({
     historyEmpty: true,
     redoEmpty: true,
     cellsEmpty: true,
-    exportBusy: false,
+    exportBusy: false,    // ---- 导出进度浮层 ----
+    // exportProgressVisible：是否显示浮层
+    // exportStageText：当前阶段文案（生成/上传/服务端处理/下载/保存）
+    // exportProgressPercent：0~100 百分比
+    // exportProgressIndeterminate：true 时显示加载动画（服务端处理中，进度未知）
     exportProgressVisible: false,
     exportStageText: "",
     exportProgressPercent: 0,
@@ -258,6 +262,7 @@ Page({
     }
   },
 
+  // 显示导出进度浮层，并设置初始阶段（文案/百分比/动画模式）
   showExportProgress(stageText, percent, indeterminate) {
     this.setData({
       exportProgressVisible: true,
@@ -267,6 +272,7 @@ Page({
     });
   },
 
+  // 更新进度浮层内容（阶段文案/百分比/动画模式），浮层保持显示
   updateExportProgress(stageText, percent, indeterminate) {
     this.setData({
       exportStageText: stageText,
@@ -275,6 +281,7 @@ Page({
     });
   },
 
+  // 关闭导出进度浮层（导出成功或失败后都会调用）
   hideExportProgress() {
     this.setData({ exportProgressVisible: false });
   },
@@ -1685,14 +1692,19 @@ Page({
     return text;
   },
 
+  // 导出下载主流程：分块上传 → 服务端生成文件 → 下载结果 → 返回 ArrayBuffer
+  // onProgress(label, percent, indeterminate)：把各阶段进度实时同步给进度浮层
   async submitDownload({ filename, dataUrl = null, text = null, onProgress = null }) {
+    // 阶段进度上报工具：统一把文案/百分比/动画模式传给进度浮层
     const stage = (label, percent, indeterminate) => {
       if (typeof onProgress === "function") onProgress(label, percent, indeterminate);
     };
+    // 组装下载请求参数：文件名（去扩展名）+ 当前图片指纹，用于服务端校验下载权限
     const payload = {
       filename: filename.replace(/\.[^/.]+$/, ""),
       imageHash: this.sourceFingerprint,
     };
+    // 大图走分块上传：按块数实时上报进度，百分比映射到 12%~67%
     if (dataUrl) {
       const { uploadId, ext } = await uploadDataChunks(dataUrl, "download", (done, total) => {
         const percent = 12 + Math.round((done / total) * 55);
@@ -1702,6 +1714,7 @@ Page({
       payload.dataExt = ext;
     }
     if (text !== null && text !== undefined) payload.text = text;
+    // 服务端合并分块并生成文件：内部进度不可知，显示 70% 加载动画
     stage("服务端正在生成文件…", 70, true);
     const result = await requestJson("/api/download-prepare", { method: "POST", data: payload });
     const fileID = result && result.fileID;
@@ -1709,6 +1722,7 @@ Page({
       throw new Error("下载准备失败，请重试。");
     }
     // 云函数版：文件已上传到云存储，用 wx.cloud.downloadFile 拉取
+    // 拉取云存储结果文件：onProgressUpdate 提供真实下载进度，映射到 70%~96%
     const dl = await new Promise((resolve, reject) => {
       wx.cloud.downloadFile({
         fileID,
@@ -1721,6 +1735,7 @@ Page({
       });
     });
     stage("正在读取文件…", 97, false);
+    // 将下载的临时文件读取为 ArrayBuffer，返回给调用方保存
     const read = await new Promise((resolve, reject) => {
       wx.getFileSystemManager().readFile({
         filePath: dl.tempFilePath,
@@ -1731,6 +1746,7 @@ Page({
     return read.data;
   },
 
+  // 保存下载结果：CSV 直接预览并复制；PNG 写入临时目录后存入相册（失败则预览供长按保存）
   saveDownloadedFile(buffer, filename) {
     const fs = wx.getFileSystemManager();
     const filePath = `${wx.env.USER_DATA_PATH}/${filename}`;
@@ -1781,16 +1797,20 @@ Page({
     this.showExportProgress("正在生成图纸…", 5, false);
     try {
       this.clearError();
+      // 步骤1：生成本地导出画布（showCodes 决定是否绘制色号）
       const exportCanvas = this.renderExportCanvas(showCodes);
       this.updateExportProgress("正在生成图纸…", 10, false);
       const filename = `拼豆图纸-${suffix}-${this.cols}x${this.rows}.png`;
+      // 步骤2：画布转 base64（10240 为最大边长限制）
       const dataUrl = await this.canvasToDataUrl(exportCanvas, 10240);
+      // 步骤3：分块上传 → 服务端生成 → 下载结果，全程由 onProgress 更新进度条
       const buffer = await this.submitDownload({
         filename,
         dataUrl,
         onProgress: (label, percent, indeterminate) =>
           this.updateExportProgress(label, percent, indeterminate),
       });
+      // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
       this.hideExportProgress();
@@ -1827,6 +1847,7 @@ Page({
     this.showExportProgress("正在生成 CSV 清单…", 5, false);
     try {
       this.clearError();
+      // 步骤1：构建 CSV 内容（色号统计 + 点阵坐标）
       const pointRows = this.cells.flatMap((line, rowIndex) =>
         line.map((cell, colIndex) => [rowIndex + 1, colIndex + 1, cell.code, cell.hex.toUpperCase()]),
       );
@@ -1844,12 +1865,14 @@ Page({
       ];
       const csvText = rows.map((row) => row.map((cell) => this.sanitizeCsvField(cell)).join(",")).join("\n");
       const filename = `拼豆清单-${this.cols}x${this.rows}.csv`;
+      // 步骤2：上传文本并下载生成的文件（同样走进度条）
       const buffer = await this.submitDownload({
         filename,
         text: `\uFEFF${csvText}`,
         onProgress: (label, percent, indeterminate) =>
           this.updateExportProgress(label, percent, indeterminate),
       });
+      // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
       this.hideExportProgress();

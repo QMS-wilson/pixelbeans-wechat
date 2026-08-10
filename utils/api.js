@@ -40,8 +40,9 @@ function requestJson(path, options = {}) {
   return callFunction(name, (options && options.data) || {});
 }
 
-// 大图分块上传：把 base64 切成小块逐块调用 upload-chunk 云函数（云函数内部写入云存储）。
-// 云函数入参有大小限制，且客户端直传大文件容易连接重置，所以走分块。
+// 大图分块上传：把 base64 切成小块，逐块调用 upload-chunk 云函数（云函数内部写入云存储并记录分块）。
+// 背景：云函数入参有大小限制（约 100KB），且客户端直传大文件容易连接重置，所以必须走分块。
+// 参数：dataUrl 为 base64 数据；prefix 用于区分用途（ai-input/download）；onProgress 逐块上报 (done, total) 进度。
 function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
   return new Promise((resolve, reject) => {
     const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
@@ -52,6 +53,7 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
     const mime = match[1] || "image/jpeg";
     const b64 = match[2];
     const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    // 本次上传的唯一批次 ID：分块云存储目录与 chunks 集合记录都以它为标识
     const uploadId = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // 云函数文本请求体上限 100KB，这里用 64KB 分块留足余量
     const CHUNK_SIZE = 64 * 1024;
@@ -60,6 +62,7 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
       chunks.push(b64.slice(i, i + CHUNK_SIZE));
     }
     const total = chunks.length;
+    // 单块上传：调用 upload-chunk 云函数写入该块，失败自动重试一次（网络抖动兜底）
     const uploadChunk = (index) =>
       callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }).catch(() =>
         callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }),
@@ -69,6 +72,7 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
         // 3 路并发上传，加快速度（fileID 按 index 记录，乱序无影响）
         let cursor = 0;
         let done = 0;
+        // 每传完一块回调一次进度（done/total），供导出页进度条实时更新
         const reportProgress = () => {
           if (typeof onProgress === "function") onProgress(done, total);
         };
@@ -86,8 +90,10 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
             })(),
           );
         }
+        // 等待所有并发上传任务结束
         await Promise.all(workers);
         reportProgress();
+        // 全部上传完成：返回批次 ID / 扩展名 / 总块数，供服务端组装文件
         resolve({ uploadId, ext, total });
       } catch (error) {
         reject(new Error(`图片分块上传失败：${(error && error.message) || ""}`));
