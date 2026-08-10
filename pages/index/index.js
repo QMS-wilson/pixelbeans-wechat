@@ -1965,6 +1965,7 @@ Page({
         mergeLevel: this.data.mergeLevel,
         gridLineOn: this.data.gridLineOn,
         sourceFingerprint: this.sourceFingerprint || "",
+        selectedColorCode: this.selectedColorCode || "",
       });
     } catch {
       // 存储空间不足时静默失败
@@ -2003,10 +2004,17 @@ Page({
       statusText: "已恢复存档",
       statusState: "ready",
     });
+    // 恢复上次选中的画笔颜色，避免画笔颜色被重置后“点了没反应”
+    if (payload.selectedColorCode && this.getActivePalette().some((color) => color.code === payload.selectedColorCode)) {
+      this.selectedColorCode = payload.selectedColorCode;
+    }
+    this.isDrawing = false;
+    this.renderMetrics = null;
     this.renderEditorPalette();
     this.recomputeCounts();
     this.renderCanvas();
     this.syncUiSummary();
+    this.updateEditorActions();
     this.toast("已恢复上次未完成的图纸");
     return true;
   },
@@ -2058,6 +2066,7 @@ Page({
       gridLineOn: project.gridLineOn,
       sourceFingerprint: project.sourceFingerprint || "",
       sourceType: project.sourceType || "blank",
+      selectedColorCode: project.selectedColorCode || "",
     };
   },
 
@@ -2185,6 +2194,7 @@ Page({
       gridLineOn: this.data.gridLineOn,
       sourceFingerprint: this.sourceFingerprint || "",
       sourceType: this.sourceType || "blank",
+      selectedColorCode: this.selectedColorCode || "",
       cells: this.cells,
     };
     wx.showLoading({ title: "保存中", mask: true });
@@ -2240,6 +2250,12 @@ Page({
       mergeLevel: loaded.mergeLevel || this.data.mergeLevel,
       gridLineOn: loaded.gridLineOn !== undefined ? loaded.gridLineOn : this.data.gridLineOn,
     });
+    // 恢复上次选中的画笔颜色，避免画笔颜色被重置后“点了没反应”
+    if (loaded.selectedColorCode && this.getActivePalette().some((color) => color.code === loaded.selectedColorCode)) {
+      this.selectedColorCode = loaded.selectedColorCode;
+    }
+    this.isDrawing = false;
+    this.renderMetrics = null;
     this.cells = loaded.cells;
     this.cols = loaded.cols || (loaded.cells[0] || []).length;
     this.rows = loaded.rows || loaded.cells.length;
@@ -2253,6 +2269,7 @@ Page({
     this.recomputeCounts();
     this.renderCanvas();
     this.syncUiSummary();
+    this.updateEditorActions();
     this.schedulePatternSave();
     this.setData({
       sourceType: this.sourceType,

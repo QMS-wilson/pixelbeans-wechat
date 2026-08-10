@@ -39,7 +39,7 @@ exports.main = async (event) => {
     }
 
     if (action === "saveMeta") {
-      const { id, name, savedAt, cols, rows, paletteIndex, gridSize, mergeLevel, gridLineOn, sourceFingerprint, sourceType, fileID } = event || {};
+      const { id, name, savedAt, cols, rows, paletteIndex, gridSize, mergeLevel, gridLineOn, sourceFingerprint, sourceType, selectedColorCode, fileID } = event || {};
       if (!id || !fileID) {
         return { error: "Missing id or fileID", message: "缺少项目 ID 或文件 ID。" };
       }
@@ -55,6 +55,7 @@ exports.main = async (event) => {
         gridLineOn: !!gridLineOn,
         sourceFingerprint: String(sourceFingerprint || ""),
         sourceType: String(sourceType || "blank"),
+        selectedColorCode: String(selectedColorCode || ""),
         fileID,
         updatedAt: new Date().toISOString(),
       };
