@@ -2134,9 +2134,38 @@ Page({
         // 文件不存在时忽略
       }
     });
-    this.toast("已清除本地存档");
-    this.setData({ statusText: "已清除本地存档", statusState: "idle", showClearHint: false });
+    // 恢复到“未上传图片”初始状态：清空图纸、原图与预览图，重新显示上传框
+    this.cells = [];
+    this.cols = 64;
+    this.rows = 64;
+    this.counts = {};
+    this.history = [];
+    this.redoHistory = [];
+    this.image = null;
+    this.originalImage = null;
+    this.sourceName = "";
+    this.sourceType = "none";
+    this.sourceFingerprint = "";
+    this.renderMetrics = null;
+    this.isDrawing = false;
+    this.selectedColorCode = "";
+    this.setData({
+      sourceType: "none",
+      cellsEmpty: true,
+      statusText: "等待图片",
+      statusState: "",
+      canvasHint: "上传后会生成带网格线的拼豆预览图，可用于确认布局和配色。",
+      controlNote: "上传图片后会自动生成色号，你也能继续手动微调。",
+      uploadTitle: "上传图片开始生成",
+      uploadHint: "支持 JPG / PNG / WebP，可点击选择图片",
+      showClearHint: false,
+    });
+    this.renderEditorPalette();
+    this.updateComparePreview();
+    this.renderCanvas();
+    this.syncUiSummary();
     this.updateEditorActions();
+    this.toast("已清除存档，请重新上传图片");
   },
 
     // ---------- 项目库：多图纸存档（云端按 openid 绑定，清除缓存后仍可恢复） ----------
