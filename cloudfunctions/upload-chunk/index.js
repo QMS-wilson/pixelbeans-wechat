@@ -45,6 +45,8 @@ exports.main = async (event) => {
       return { error: "Chunk too large", message: "单块过大（超过600KB）。" };
     }
 
+    console.log("[upload-chunk] start", { uploadId, index, total, dataLength: data.length });
+
     // Make sure the chunks collection exists before any write.
     await ensureCollection(CHUNKS_COLLECTION);
 
@@ -52,6 +54,7 @@ exports.main = async (event) => {
       cloudPath: `chunks/${uploadId}/${index}.b64`,
       fileContent: data,
     });
+    console.log("[upload-chunk] uploaded", { uploadId, index, fileID: uploaded.fileID });
 
     const coll = db.collection(CHUNKS_COLLECTION);
     const chunkId = `${uploadId}__${index}`;
@@ -73,8 +76,10 @@ exports.main = async (event) => {
       }
     }
 
+    console.log("[upload-chunk] recorded", { uploadId, index });
     return { success: true, index };
   } catch (error) {
+    console.error("[upload-chunk] failed", { uploadId, index }, error);
     return {
       error: "Chunk upload failed",
       message: (error && error.message) || "分块上传失败",

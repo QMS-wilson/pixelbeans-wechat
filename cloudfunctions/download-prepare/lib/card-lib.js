@@ -476,6 +476,7 @@ async function optimizeImage(imageBase64, prompt = DEFAULT_PROMPT) {
     force_single: true,
   });
   const taskId = submitResult.data?.task_id || submitResult.task_id;
+  console.log("[optimizeImage] submitted", { taskId, promptLength: String(prompt || "").length });
   if (!taskId) throw new Error("AI 优化任务提交失败：未返回 task_id。");
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -486,7 +487,9 @@ async function optimizeImage(imageBase64, prompt = DEFAULT_PROMPT) {
       req_json: JSON.stringify({ return_url: true }),
     });
     const taskStatus = result.data?.task_status || result.data?.status;
+    if (attempt % 10 === 0) console.log("[optimizeImage] polling", { taskId, attempt, taskStatus });
     if (taskStatus === "success" || taskStatus === "done") {
+      console.log("[optimizeImage] success", { taskId, attempt });
       const imageUrl = result.data?.images?.[0]?.url || result.data?.image_urls?.[0];
       const imageBase64Result = result.data?.binary_data_base64?.[0];
       if (imageBase64Result) return { imageUrl: `data:image/jpeg;base64,${imageBase64Result}`, taskId };
@@ -494,9 +497,11 @@ async function optimizeImage(imageBase64, prompt = DEFAULT_PROMPT) {
       throw new Error("AI 优化完成，但没有返回图片。");
     }
     if (taskStatus === "failed") {
+      console.error("[optimizeImage] task failed", { taskId, attempt, message: result.message || "AI 优化任务失败" });
       throw new Error(result.message || "AI 优化任务失败。");
     }
   }
+  console.error("[optimizeImage] timeout", { taskId });
   throw new Error("AI 优化超时，请稍后重试。");
 }
 
@@ -522,13 +527,16 @@ async function prepareDownloadFile({ dataUrl, text, filename, ext }) {
   } else {
     throw new Error("Missing dataUrl or text");
   }
+  console.log("[prepareDownloadFile] buffer ready", { cloudPath, byteLength: buffer.length, mime });
   const uploaded = await cloud.uploadFile({ cloudPath, fileContent: buffer });
+  console.log("[prepareDownloadFile] uploaded", { fileID: uploaded.fileID, filename: `${filename}${ext}` });
   return { fileID: uploaded.fileID, filename: `${filename}${ext}`, mime, ext };
 }
 
 // 把 AI 结果图（data URL）上传到云存储，返回 fileID。
 // 云函数响应有 1MB 上限，base64 大图不能直接放返回值里。
 async function uploadImageResult(dataUrl, taskId) {
+  console.log("[uploadImageResult] start", { taskId, dataUrlLength: String(dataUrl || "").length });
   const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error("AI 优化结果图片格式无效。");
   const buffer = Buffer.from(match[2], "base64");
@@ -536,6 +544,7 @@ async function uploadImageResult(dataUrl, taskId) {
   const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : ".jpg";
   const cloudPath = `ai-results/${taskId || crypto.randomUUID()}${ext}`;
   const uploaded = await cloud.uploadFile({ cloudPath, fileContent: buffer });
+  console.log("[uploadImageResult] uploaded", { fileID: uploaded.fileID });
   return uploaded.fileID;
 }
 
@@ -546,7 +555,11 @@ async function uploadImageResult(dataUrl, taskId) {
 // Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
 // collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
 // Query by uploadId, sort by index, then download and merge the base64 parts.
+// Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
+// collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
+// Query by uploadId, sort by index, then download and merge the base64 parts.
 async function assembleUpload(uploadId) {
+  console.log("[assembleUpload] start", { uploadId });
   const coll = db.collection("chunks");
   const pageSize = 1000;
   let rows = [];
@@ -560,11 +573,13 @@ async function assembleUpload(uploadId) {
     if (rows.length > 10000) break;
   }
   if (!rows.length) {
+    console.error("[assembleUpload] no chunk records", { uploadId });
     throw new Error("分块上传记录不存在，请重新导出。");
   }
   rows.sort((a, b) => Number(a.index) - Number(b.index));
   const total = Number((rows[0] && rows[0].total) || 0) || rows.length;
   if (rows.length !== total || rows.some((p) => !p || !p.fileID)) {
+    console.error("[assembleUpload] incomplete", { uploadId, count: rows.length, total });
     throw new Error("分块上传不完整，请重试。");
   }
 
@@ -587,7 +602,9 @@ async function assembleUpload(uploadId) {
   }
   await Promise.all(workers);
 
-  return Buffer.from(parts.join(""), "base64");
+  const merged = parts.join("");
+  console.log("[assembleUpload] merged", { uploadId, chunkCount: rows.length, base64Length: merged.length });
+  return Buffer.from(merged, "base64");
 }
 
 module.exports = {

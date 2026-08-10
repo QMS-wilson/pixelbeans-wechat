@@ -1706,23 +1706,28 @@ Page({
     };
     // 大图走分块上传：按块数实时上报进度，百分比映射到 12%~67%
     if (dataUrl) {
+      console.log("[submitDownload] chunk upload start", { dataUrlLength: dataUrl.length });
       const { uploadId, ext } = await uploadDataChunks(dataUrl, "download", (done, total) => {
         const percent = 12 + Math.round((done / total) * 55);
         stage(`正在上传图纸数据（${done}/${total}）`, percent, false);
       });
       payload.dataUploadId = uploadId;
       payload.dataExt = ext;
+      console.log("[submitDownload] chunk upload done", { uploadId });
     }
     if (text !== null && text !== undefined) payload.text = text;
     // 服务端合并分块并生成文件：内部进度不可知，显示 70% 加载动画
+    console.log("[submitDownload] server prepare start");
     stage("服务端正在生成文件…", 70, true);
     const result = await requestJson("/api/download-prepare", { method: "POST", data: payload });
+    console.log("[submitDownload] server prepare done", { fileID: result && result.fileID });
     const fileID = result && result.fileID;
     if (!fileID) {
       throw new Error("下载准备失败，请重试。");
     }
     // 云函数版：文件已上传到云存储，用 wx.cloud.downloadFile 拉取
     // 拉取云存储结果文件：onProgressUpdate 提供真实下载进度，映射到 70%~96%
+    console.log("[submitDownload] download start", { fileID });
     const dl = await new Promise((resolve, reject) => {
       wx.cloud.downloadFile({
         fileID,
@@ -1734,6 +1739,7 @@ Page({
         fail: () => reject(new Error("下载文件失败，请重试。")),
       });
     });
+    console.log("[submitDownload] download done", { tempFilePath: dl.tempFilePath });
     stage("正在读取文件…", 97, false);
     // 将下载的临时文件读取为 ArrayBuffer，返回给调用方保存
     const read = await new Promise((resolve, reject) => {
@@ -1743,11 +1749,13 @@ Page({
         fail: () => reject(new Error("读取下载文件失败，请重试。")),
       });
     });
+    console.log("[submitDownload] read done", { byteLength: read.data.byteLength });
     return read.data;
   },
 
   // 保存下载结果：CSV 直接预览并复制；PNG 写入临时目录后存入相册（失败则预览供长按保存）
   saveDownloadedFile(buffer, filename) {
+    console.log("[saveDownloadedFile]", { filename, byteLength: buffer && buffer.byteLength });
     const fs = wx.getFileSystemManager();
     const filePath = `${wx.env.USER_DATA_PATH}/${filename}`;
     try {
@@ -1788,6 +1796,7 @@ Page({
       this.setRedeemMessage("未识别到当前图片，请重新上传后再试。", "error");
       return;
     }
+    console.log("[exportPng] start", { showCodes, cols: this.cols, rows: this.rows });
     const suffix = showCodes ? "with-code" : "clean";
     this.setData({
       exportBusy: true,
@@ -1813,6 +1822,7 @@ Page({
       // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
+      console.log("[exportPng] done", { filename });
       this.hideExportProgress();
       await this.loadAccessStatus();
       this.setData({ statusText: "导出开始，正在下载…", statusState: "working", canvasHint: "图纸导出请求已发送。" });
@@ -1821,6 +1831,7 @@ Page({
         this.handleCardDenied(error.message);
         this.openErrorOverlay(`下载未完成：${error.message || "当前卡密已失效，请使用新卡密。"}`);
       } else {
+        console.error("[exportPng] failed", error);
         this.openErrorOverlay(`导出 PNG 失败：${error.message || "请稍后重试"}`);
       }
     } finally {
@@ -1843,6 +1854,7 @@ Page({
       this.setRedeemMessage("未识别到当前图片，请重新上传后再试。", "error");
       return;
     }
+    console.log("[exportCsv] start", { cols: this.cols, rows: this.rows });
     this.setData({ exportBusy: true, statusText: "正在生成 CSV 清单", statusState: "working" });
     this.showExportProgress("正在生成 CSV 清单…", 5, false);
     try {
@@ -1875,6 +1887,7 @@ Page({
       // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
+      console.log("[exportCsv] done", { filename });
       this.hideExportProgress();
       await this.loadAccessStatus();
       this.setData({ statusText: "导出开始，正在下载…", statusState: "working" });
@@ -1883,6 +1896,7 @@ Page({
         this.handleCardDenied(error.message);
         this.openErrorOverlay(`导出未完成：${error.message || "当前卡密已失效，请使用新卡密。"}`);
       } else {
+        console.error("[exportCsv] failed", error);
         this.openErrorOverlay(`导出 CSV 失败：${error.message || "请稍后重试"}`);
       }
     } finally {

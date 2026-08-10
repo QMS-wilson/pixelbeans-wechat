@@ -24,6 +24,15 @@ exports.main = async (event) => {
   try {
     const { OPENID } = cloud.getWXContext();
     const { imageBase64, imageFileID: inputFileID, imageUploadId, prompt, imageHash, freeTrial, deviceId } = event || {};
+    console.log("[ai-optimize] start", {
+      OPENID,
+      promptLength: prompt ? String(prompt).length : 0,
+      imageHash,
+      freeTrial: !!freeTrial,
+      hasBase64: !!imageBase64,
+      hasFileID: !!inputFileID,
+      hasUploadId: !!imageUploadId,
+    });
     // 大图走云存储：前端传 fileID 或分块 uploadId，函数下载后转 base64
     let resolvedImageBase64 = imageBase64;
     if (!resolvedImageBase64 && inputFileID) {
@@ -34,6 +43,7 @@ exports.main = async (event) => {
       const assembled = await assembleUpload(imageUploadId);
       resolvedImageBase64 = assembled.toString("base64");
     }
+    console.log("[ai-optimize] image ready", { base64Length: resolvedImageBase64 ? resolvedImageBase64.length : 0 });
     if (!resolvedImageBase64) {
       return { error: "Missing imageBase64 parameter" };
     }
@@ -53,8 +63,11 @@ exports.main = async (event) => {
       if (!normalizedHash) {
         return { error: "AI optimization denied", message: "未识别到当前图片，请重新上传后重试。" };
       }
+      console.log("[ai-optimize] trial optimize start", { deviceId });
       const result = await optimizeImage(resolvedImageBase64, prompt);
+      console.log("[ai-optimize] trial optimize done", { taskId: result.taskId });
       const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
+      console.log("[ai-optimize] trial result uploaded", { imageFileID });
       consumeFreeTrial(store, deviceId, normalizedHash);
       consumeFreeTrial(store, `openid:${OPENID}`, normalizedHash);
       appendLog(store, OPENID, { type: "ai_free_trial", imageHash: normalizedHash, detail: "free trial ai optimize" });
@@ -76,8 +89,11 @@ exports.main = async (event) => {
       return { error: "AI optimization denied", message: bindResult.message };
     }
 
+    console.log("[ai-optimize] paid optimize start");
     const result = await optimizeImage(resolvedImageBase64, prompt);
+    console.log("[ai-optimize] paid optimize done", { taskId: result.taskId });
     const imageFileID = await uploadImageResult(result.imageUrl, result.taskId);
+    console.log("[ai-optimize] paid result uploaded", { imageFileID });
     consumeCardAction(card, "ai");
     appendLog(store, OPENID, {
       type: "ai_optimize",
@@ -88,6 +104,7 @@ exports.main = async (event) => {
     await writeStore(store);
     return { success: true, imageFileID, taskId: result.taskId, ...buildAccessPayload(card) };
   } catch (error) {
+    console.error("[ai-optimize] failed", error);
     return { error: "AI optimization failed", message: error.message || "未知错误" };
   }
 };

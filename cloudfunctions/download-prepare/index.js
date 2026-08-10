@@ -20,6 +20,15 @@ exports.main = async (event) => {
     const { OPENID } = cloud.getWXContext();
     const { filename = "export", imageHash, dataUrl, dataFileID, dataUploadId, dataExt, text } = event || {};
     const safeFilename = String(filename).replace(/[/\\\r\n\0]/g, "_").replace(/\.[^/.]+$/, "");
+    console.log("[download-prepare] start", {
+      OPENID,
+      safeFilename,
+      imageHash,
+      hasDataUrl: !!dataUrl,
+      hasDataFileID: !!dataFileID,
+      hasDataUploadId: !!dataUploadId,
+      textLength: text ? String(text).length : 0,
+    });
 
     const store = await readStore();
     const binding = getBinding(store, OPENID);
@@ -47,6 +56,9 @@ exports.main = async (event) => {
       const mime = dataExt === "png" ? "image/png" : dataExt === "webp" ? "image/webp" : "image/jpeg";
       resolvedDataUrl = `data:${mime};base64,${assembled.toString("base64")}`;
     }
+    console.log("[download-prepare] data ready", {
+      resolvedDataUrlLength: resolvedDataUrl ? resolvedDataUrl.length : 0,
+    });
     const prepared = await prepareDownloadFile({ dataUrl: resolvedDataUrl, text, filename: safeFilename });
     consumeCardAction(card, "download");
     appendLog(store, OPENID, {
@@ -57,8 +69,10 @@ exports.main = async (event) => {
     });
     await writeStore(store);
 
+    console.log("[download-prepare] prepared", { fileID: prepared.fileID, filename: prepared.filename, mime: prepared.mime });
     return { success: true, fileID: prepared.fileID, filename: prepared.filename, mime: prepared.mime };
   } catch (error) {
+    console.error("[download-prepare] failed", error);
     return { error: "Download prepare failed", message: error.message || "下载准备失败" };
   }
 };

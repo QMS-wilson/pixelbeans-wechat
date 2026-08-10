@@ -62,11 +62,13 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
       chunks.push(b64.slice(i, i + CHUNK_SIZE));
     }
     const total = chunks.length;
+    console.log("[uploadDataChunks] start", { prefix, total, b64Length: b64.length });
     // 单块上传：调用 upload-chunk 云函数写入该块，失败自动重试一次（网络抖动兜底）
     const uploadChunk = (index) =>
-      callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }).catch(() =>
-        callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }),
-      );
+      callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] }).catch((error) => {
+        console.warn("[uploadDataChunks] chunk failed, retrying", { uploadId, index, error: error && error.message });
+        return callFunction("upload-chunk", { uploadId, index, total, data: chunks[index] });
+      });
     (async () => {
       try {
         // 3 路并发上传，加快速度（fileID 按 index 记录，乱序无影响）
@@ -94,8 +96,10 @@ function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
         await Promise.all(workers);
         reportProgress();
         // 全部上传完成：返回批次 ID / 扩展名 / 总块数，供服务端组装文件
+        console.log("[uploadDataChunks] done", { uploadId, total });
         resolve({ uploadId, ext, total });
       } catch (error) {
+        console.error("[uploadDataChunks] failed", { uploadId, error: error && error.message });
         reject(new Error(`图片分块上传失败：${(error && error.message) || ""}`));
       }
     })();
