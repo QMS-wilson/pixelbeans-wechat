@@ -34,8 +34,10 @@ exports.main = async (event) => {
 
     if (action === "list") {
       const res = await coll.where({ openid: OPENID }).orderBy("savedAt", "desc").limit(100).get();
-      console.log("[project-store] list done", { count: (res.data || []).length });
-      return { success: true, projects: res.data || [] };
+      // 文档主键是项目 id（_id），这里统一补上 id 字段，方便前端合并本地/云端列表
+      const projects = (res.data || []).map((doc) => ({ ...doc, id: doc._id }));
+      console.log("[project-store] list done", { count: projects.length });
+      return { success: true, projects };
     }
 
     if (action === "saveMeta") {
@@ -44,6 +46,7 @@ exports.main = async (event) => {
         return { error: "Missing id or fileID", message: "缺少项目 ID 或文件 ID。" };
       }
       const record = {
+        id,
         openid: OPENID,
         name: String(name || "").slice(0, 60),
         savedAt: Number(savedAt) || Date.now(),

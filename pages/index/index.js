@@ -122,6 +122,7 @@ Page({
     this.isDrawing = false;
     this.selectedColorCode = "";
     this._cachedOriginalRef = null;
+    this._migrationFailedIds = null;
     this._cachedPreviewRef = null;
     this.confirmedAiPrompt = DEFAULT_AI_PROMPT;
     this.aiOptimizeCacheKey = "";
@@ -2291,20 +2292,25 @@ Page({
     try {
       const res = await callFunction("project-store", { action: "list" });
       if (!res || !res.success) throw new Error((res && res.message) || "云端列表获取失败");
-      const cloudProjects = res.projects || [];
+      // 兼容旧数据：云端文档可能只有 _id 没有 id 字段
+      const cloudProjects = (res.projects || []).map((p) => ({ ...p, id: p.id || p._id }));
       const cloudIds = new Set(cloudProjects.map((p) => p && p.id));
       const localProjects = this.readProjects();
       const localOnly = localProjects.filter((p) => p && !cloudIds.has(p.id));
       this.writeProjects([...cloudProjects, ...localOnly]);
       this.applyProjectList([...cloudProjects, ...localOnly]);
-      if (localOnly.length) {
-        this.toast(`正在同步 ${localOnly.length} 个本地项目到云端…`);
-        for (const project of localOnly) {
+      // 只自动同步一次：本次会话中已失败的本地项目标记后不再反复提示
+      const pending = localOnly.filter((p) => !this._migrationFailedIds || !this._migrationFailedIds.has(p.id));
+      if (pending.length) {
+        this.toast(`正在同步 ${pending.length} 个本地项目到云端…`);
+        for (const project of pending) {
           try {
             const uploaded = await this.uploadProjectToCloud(project);
             project.fileID = uploaded.fileID;
           } catch (error) {
             console.error("[project-store] migrate failed", { id: project.id, error: error && error.message });
+            this._migrationFailedIds = this._migrationFailedIds || new Set();
+            this._migrationFailedIds.add(project.id);
           }
         }
         this.writeProjects(localProjects);
