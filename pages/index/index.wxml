@@ -311,7 +311,7 @@
       </view>
       <view class="project-form-row">
         <input class="project-name-input" value="{{projectName}}" placeholder="项目名称，例如：小猫挂件" bindinput="onProjectNameInput" />
-        <button class="action-btn" bindtap="saveProjectFromLibrary">保存当前</button>
+        <button class="action-btn project-save-btn" bindtap="saveProjectFromLibrary">保存当前</button>
       </view>
       <scroll-view class="project-scroll" scroll-y>
         <view class="project-item" wx:for="{{projects}}" wx:key="id">

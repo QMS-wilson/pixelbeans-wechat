@@ -600,12 +600,30 @@
 /* 项目库 */
 .project-form-row {
   display: flex;
+  align-items: center;
   gap: 12rpx;
   margin: 16rpx 0;
 }
 
+.project-save-btn {
+  min-height: 60rpx;
+  height: 60rpx;
+  margin: 0;
+  padding: 0 28rpx;
+  border-radius: 14rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.project-save-btn::after {
+  border: none;
+}
+
 .project-name-input {
   flex: 1;
+  min-width: 0;
   min-height: 68rpx;
   padding: 0 20rpx;
   border: 1rpx solid rgba(15, 23, 42, 0.12);
