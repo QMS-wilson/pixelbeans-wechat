@@ -1002,6 +1002,23 @@ Page({
     return Math.max(1, Math.round(targetCols * ratio));
   },
 
+  // 用当前格子重建一张像素画布（每格 1x1），作为“恢复图纸/无原图”时的采样源
+  rebuildSourceFromCells() {
+    const cols = Math.max(1, this.cols);
+    const rows = Math.max(1, this.rows);
+    const canvas = this.createOffscreen(cols, rows);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, cols, rows);
+    this.cells.forEach((line, row) => {
+      line.forEach((cell, col) => {
+        if (!cell || !cell.hex) return;
+        ctx.fillStyle = cell.hex;
+        ctx.fillRect(col, row, 1, 1);
+      });
+    });
+    return canvas;
+  },
   sampleImage(image, cols) {
     const rows = this.fitImage(image, cols);
     const sourceCanvas = this.createOffscreen(cols, rows);
@@ -1079,14 +1096,20 @@ Page({
       this.createBlankBoard({ preserveSourceFingerprint: true });
       return;
     }
-    if (!this.originalImage) {
-      this.renderCanvas();
-      return;
+    // 恢复的图纸 / 示例图纸没有原图：用当前格子重建画布作为采样源，
+    // 让“横向格数”“颜色合并”滑块同样生效（AI 优化需要原图，此场景跳过）。
+    let sourceForSampling = this.originalImage;
+    if (!sourceForSampling) {
+      if (!this.cells.length) {
+        this.renderCanvas();
+        return;
+      }
+      sourceForSampling = this.rebuildSourceFromCells();
     }
 
     let aiInfo = null;
     try {
-      if (usesAi) {
+      if (usesAi && this.originalImage) {
         aiInfo = await this.buildAiSourceInfo(this.originalImage);
         const cacheHit =
           (this.aiOptimizeCacheKey === aiInfo.cacheKey && this.aiOptimizeCacheImage) ||
@@ -1109,13 +1132,13 @@ Page({
         this.setData({ statusText: "正在生成图纸", statusState: "working" });
       }
 
-      const sourceForSampling = await this.buildProcessedSource(this.originalImage, aiInfo);
+      const finalSource = this.originalImage ? await this.buildProcessedSource(this.originalImage, aiInfo) : sourceForSampling;
       if (token !== this.processToken) return;
 
-      this.image = sourceForSampling;
-      this.sampleImage(sourceForSampling, Number(this.data.gridSize));
+      this.image = finalSource;
+      this.sampleImage(finalSource, Number(this.data.gridSize));
       this.renderCanvas();
-      this.updateComparePreview(this.originalImage, sourceForSampling);
+      this.updateComparePreview(this.originalImage, finalSource);
       if (usesAi) {
         this.setData({ preprocessVisible: false });
       }
