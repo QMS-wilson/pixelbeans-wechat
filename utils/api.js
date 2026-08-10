@@ -42,7 +42,7 @@ function requestJson(path, options = {}) {
 
 // 大图分块上传：把 base64 切成小块逐块调用 upload-chunk 云函数（云函数内部写入云存储）。
 // 云函数入参有大小限制，且客户端直传大文件容易连接重置，所以走分块。
-function uploadDataChunks(dataUrl, prefix = "upload") {
+function uploadDataChunks(dataUrl, prefix = "upload", onProgress) {
   return new Promise((resolve, reject) => {
     const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
@@ -68,6 +68,10 @@ function uploadDataChunks(dataUrl, prefix = "upload") {
       try {
         // 3 路并发上传，加快速度（fileID 按 index 记录，乱序无影响）
         let cursor = 0;
+        let done = 0;
+        const reportProgress = () => {
+          if (typeof onProgress === "function") onProgress(done, total);
+        };
         const workers = [];
         for (let w = 0; w < Math.min(3, total); w += 1) {
           workers.push(
@@ -76,11 +80,14 @@ function uploadDataChunks(dataUrl, prefix = "upload") {
                 const index = cursor;
                 cursor += 1;
                 await uploadChunk(index);
+                done += 1;
+                reportProgress();
               }
             })(),
           );
         }
         await Promise.all(workers);
+        reportProgress();
         resolve({ uploadId, ext, total });
       } catch (error) {
         reject(new Error(`图片分块上传失败：${(error && error.message) || ""}`));

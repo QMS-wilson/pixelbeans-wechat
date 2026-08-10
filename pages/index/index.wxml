@@ -216,6 +216,19 @@
     </view>
   </view>
 
+  <view class="overlay export-progress-overlay" wx:if="{{exportProgressVisible}}">
+    <view class="overlay-card export-progress-card">
+      <view class="spinner" wx:if="{{exportProgressIndeterminate}}"></view>
+      <text class="export-progress-percent" wx:else>{{exportProgressPercent}}%</text>
+      <text class="overlay-title">正在导出图纸</text>
+      <text class="overlay-sub">{{exportStageText}}</text>
+      <view class="progress-track">
+        <view wx:if="{{exportProgressIndeterminate}}" class="progress-slider"></view>
+        <view wx:else class="progress-fill" style="width: {{exportProgressPercent}}%;"></view>
+      </view>
+      <text class="progress-hint">大图导出需要一些时间，请勿关闭页面</text>
+    </view>
+  </view>
   <view class="overlay preprocess-overlay" wx:if="{{preprocessVisible}}" bindtap="togglePreprocessPanel">
     <view class="modal-card" catchtap="noop">
       <view class="modal-head">

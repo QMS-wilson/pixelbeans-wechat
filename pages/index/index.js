@@ -64,6 +64,10 @@ Page({
     redoEmpty: true,
     cellsEmpty: true,
     exportBusy: false,
+    exportProgressVisible: false,
+    exportStageText: "",
+    exportProgressPercent: 0,
+    exportProgressIndeterminate: false,
     totalBeads: "0 颗",
     paletteList: [],
     processedPreviewLabel: "预处理后",
@@ -240,6 +244,7 @@ Page({
   // 任一弹窗打开时隐藏画布（原生层 canvas 会盖住普通视图），关闭后重绘
   syncOverlayState() {
     const open =
+      this.data.exportProgressVisible ||
       this.data.aiOverlayVisible ||
       this.data.preprocessVisible ||
       this.data.cardModalVisible ||
@@ -251,6 +256,27 @@ Page({
       this.renderCanvas();
       this.updateComparePreview();
     }
+  },
+
+  showExportProgress(stageText, percent, indeterminate) {
+    this.setData({
+      exportProgressVisible: true,
+      exportStageText: stageText,
+      exportProgressPercent: percent,
+      exportProgressIndeterminate: !!indeterminate,
+    });
+  },
+
+  updateExportProgress(stageText, percent, indeterminate) {
+    this.setData({
+      exportStageText: stageText,
+      exportProgressPercent: percent,
+      exportProgressIndeterminate: !!indeterminate,
+    });
+  },
+
+  hideExportProgress() {
+    this.setData({ exportProgressVisible: false });
   },
 
   toast(title, icon = "none") {
@@ -1659,17 +1685,24 @@ Page({
     return text;
   },
 
-  async submitDownload({ filename, dataUrl = null, text = null }) {
+  async submitDownload({ filename, dataUrl = null, text = null, onProgress = null }) {
+    const stage = (label, percent, indeterminate) => {
+      if (typeof onProgress === "function") onProgress(label, percent, indeterminate);
+    };
     const payload = {
       filename: filename.replace(/\.[^/.]+$/, ""),
       imageHash: this.sourceFingerprint,
     };
     if (dataUrl) {
-      const { uploadId: dataUploadId, ext: dataExt } = await uploadDataChunks(dataUrl, "download");
-      payload.dataUploadId = dataUploadId;
-      payload.dataExt = dataExt;
+      const { uploadId, ext } = await uploadDataChunks(dataUrl, "download", (done, total) => {
+        const percent = 12 + Math.round((done / total) * 55);
+        stage(`正在上传图纸数据（${done}/${total}）`, percent, false);
+      });
+      payload.dataUploadId = uploadId;
+      payload.dataExt = ext;
     }
     if (text !== null && text !== undefined) payload.text = text;
+    stage("服务端正在生成文件…", 70, true);
     const result = await requestJson("/api/download-prepare", { method: "POST", data: payload });
     const fileID = result && result.fileID;
     if (!fileID) {
@@ -1679,10 +1712,15 @@ Page({
     const dl = await new Promise((resolve, reject) => {
       wx.cloud.downloadFile({
         fileID,
+        onProgressUpdate: (res) => {
+          const percent = Math.min(96, 70 + Math.round(((res.progress || 0) / 100) * 26));
+          stage("正在下载文件…", percent, false);
+        },
         success: resolve,
         fail: () => reject(new Error("下载文件失败，请重试。")),
       });
     });
+    stage("正在读取文件…", 97, false);
     const read = await new Promise((resolve, reject) => {
       wx.getFileSystemManager().readFile({
         filePath: dl.tempFilePath,
@@ -1740,13 +1778,22 @@ Page({
       statusText: showCodes ? "正在生成带编号图纸" : "正在生成纯色图纸",
       statusState: "working",
     });
+    this.showExportProgress("正在生成图纸…", 5, false);
     try {
       this.clearError();
       const exportCanvas = this.renderExportCanvas(showCodes);
+      this.updateExportProgress("正在生成图纸…", 10, false);
       const filename = `拼豆图纸-${suffix}-${this.cols}x${this.rows}.png`;
       const dataUrl = await this.canvasToDataUrl(exportCanvas, 10240);
-      const buffer = await this.submitDownload({ filename, dataUrl });
+      const buffer = await this.submitDownload({
+        filename,
+        dataUrl,
+        onProgress: (label, percent, indeterminate) =>
+          this.updateExportProgress(label, percent, indeterminate),
+      });
+      this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
+      this.hideExportProgress();
       await this.loadAccessStatus();
       this.setData({ statusText: "导出开始，正在下载…", statusState: "working", canvasHint: "图纸导出请求已发送。" });
     } catch (error) {
@@ -1758,6 +1805,7 @@ Page({
       }
     } finally {
       this.setData({ exportBusy: false });
+      this.hideExportProgress();
       if (!this.error && this.cells.length) {
         this.setData({ statusText: "图纸已生成", statusState: "ready" });
       }
@@ -1776,6 +1824,7 @@ Page({
       return;
     }
     this.setData({ exportBusy: true, statusText: "正在生成 CSV 清单", statusState: "working" });
+    this.showExportProgress("正在生成 CSV 清单…", 5, false);
     try {
       this.clearError();
       const pointRows = this.cells.flatMap((line, rowIndex) =>
@@ -1795,8 +1844,15 @@ Page({
       ];
       const csvText = rows.map((row) => row.map((cell) => this.sanitizeCsvField(cell)).join(",")).join("\n");
       const filename = `拼豆清单-${this.cols}x${this.rows}.csv`;
-      const buffer = await this.submitDownload({ filename, text: `\uFEFF${csvText}` });
+      const buffer = await this.submitDownload({
+        filename,
+        text: `\uFEFF${csvText}`,
+        onProgress: (label, percent, indeterminate) =>
+          this.updateExportProgress(label, percent, indeterminate),
+      });
+      this.updateExportProgress("正在保存…", 98, false);
       this.saveDownloadedFile(buffer, filename);
+      this.hideExportProgress();
       await this.loadAccessStatus();
       this.setData({ statusText: "导出开始，正在下载…", statusState: "working" });
     } catch (error) {
@@ -1808,6 +1864,7 @@ Page({
       }
     } finally {
       this.setData({ exportBusy: false });
+      this.hideExportProgress();
       if (!this.error && this.cells.length) {
         this.setData({ statusText: "图纸已生成", statusState: "ready" });
       }

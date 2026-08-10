@@ -867,3 +867,54 @@
 .feedback-submit {
   margin-top: 20rpx;
 }
+
+.export-progress-overlay {
+  z-index: 125;
+}
+
+.export-progress-card {
+  align-items: center;
+}
+
+.export-progress-percent {
+  font-size: 44rpx;
+  font-weight: 800;
+  color: #3157d5;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12rpx;
+  background: #eef2f7;
+  border-radius: 999rpx;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3157d5, #6b8cff);
+  border-radius: 999rpx;
+  transition: width 0.25s ease;
+}
+
+.progress-slider {
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(49, 87, 213, 0), #3157d5 50%, rgba(49, 87, 213, 0));
+  border-radius: 999rpx;
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.progress-hint {
+  font-size: 22rpx;
+  color: #94a3b8;
+}
