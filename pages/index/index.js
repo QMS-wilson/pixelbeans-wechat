@@ -2468,6 +2468,30 @@ Page({
       },
     });
   },
+  // 清空当前账号（openid）的云端数据：项目（记录+文件）与意见反馈
+  clearUserCloudData() {
+    wx.showModal({
+      title: "清空云端数据",
+      content: "将删除当前账号云端保存的全部项目与意见反馈（含云存储文件），且无法恢复。确定继续吗？",
+      confirmText: "清空",
+      confirmColor: "#e11d48",
+      success: async (res) => {
+        if (!res.confirm) return;
+        wx.showLoading({ title: "清空中", mask: true });
+        try {
+          const result = await callFunction("project-store", { action: "clearUserData" });
+          wx.hideLoading();
+          // 同步清空本地项目缓存，避免下次打开时把已删除的项目重新同步回云端
+          this.writeProjects([]);
+          this.applyProjectList([]);
+          this.toast(`已清空 ${(result && result.deletedProjects) || 0} 个项目`);
+        } catch (error) {
+          wx.hideLoading();
+          this.openErrorOverlay(`清空失败：${error.message || "请稍后重试"}`);
+        }
+      },
+    });
+  },
   onFeedbackInput(e) {
     this.setData({ feedbackInput: e.detail.value });
   },

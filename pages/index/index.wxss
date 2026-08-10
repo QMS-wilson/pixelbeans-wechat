@@ -1023,3 +1023,12 @@
   border-right: 12rpx solid transparent;
   border-bottom: 14rpx solid #6d4aff;
 }
+.project-clear-row {
+  margin-top: 20rpx;
+  text-align: center;
+}
+
+.project-clear-link {
+  font-size: 24rpx;
+  color: #e11d48;
+}

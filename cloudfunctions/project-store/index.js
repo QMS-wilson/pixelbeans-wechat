@@ -89,6 +89,37 @@ exports.main = async (event) => {
       return { success: true };
     }
 
+    if (action === "clearUserData") {
+      // 清空当前 openid 关联的数据：项目（记录 + 云存储文件）、意见反馈
+      await ensureCollection(PROJECTS_COLLECTION);
+      const listRes = await coll.where({ openid: OPENID }).limit(1000).get();
+      const rows = listRes.data || [];
+      const fileIDs = rows.map((doc) => doc && doc.fileID).filter(Boolean);
+      // deleteFile 单次最多 50 个，分批删除
+      for (let i = 0; i < fileIDs.length; i += 50) {
+        try {
+          await cloud.deleteFile({ fileList: fileIDs.slice(i, i + 50) });
+        } catch (error) {
+          console.error("[project-store] clearUserData deleteFile failed", { error: error && error.message });
+        }
+      }
+      let deletedProjects = 0;
+      if (rows.length) {
+        const removed = await coll.where({ openid: OPENID }).remove();
+        deletedProjects = (removed && removed.stats && removed.stats.removed) || rows.length;
+      }
+      let deletedFeedback = 0;
+      try {
+        await ensureCollection("feedback");
+        const fb = await db.collection("feedback").where({ openid: OPENID }).remove();
+        deletedFeedback = (fb && fb.stats && fb.stats.removed) || 0;
+      } catch (error) {
+        console.error("[project-store] clearUserData feedback remove failed", { error: error && error.message });
+      }
+      console.log("[project-store] clearUserData done", { OPENID, deletedProjects, deletedFiles: fileIDs.length, deletedFeedback });
+      return { success: true, deletedProjects, deletedFiles: fileIDs.length, deletedFeedback };
+    }
+
     return { error: "Unknown action", message: "未知操作。" };
   } catch (error) {
     console.error("[project-store] failed", { action, error: error && error.message });

@@ -326,6 +326,9 @@
         </view>
         <view class="empty-state" wx:if="{{!projects.length}}">暂无保存的项目。</view>
       </scroll-view>
+      <view class="project-clear-row">
+        <text class="project-clear-link" bindtap="clearUserCloudData">清空我的云端数据（项目 / 反馈）</text>
+      </view>
     </view>
   </view>
 
