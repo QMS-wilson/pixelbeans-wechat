@@ -1103,9 +1103,13 @@ Page({
       this.createBlankBoard({ preserveSourceFingerprint: true });
       return;
     }
-    // 恢复的图纸 / 示例图纸没有原图：用当前格子重建画布作为采样源，
-    // 让“横向格数”“颜色合并”滑块同样生效（AI 优化需要原图，此场景跳过）。
-    let sourceForSampling = this.originalImage;
+    // 采样源优先级：
+    // 1) AI 关闭时，已加载/恢复的预处理图（如 AI 结果）优先作为采样源，
+    //    避免“预处理图变成原图”、越调越模糊；
+    // 2) 有原图则以原图重新生成；
+    // 3) 都没有原图时用当前格子重建画布（旧项目降级方案）。
+    const useRestoredPreview = !usesAi && this.image && this.image !== this.originalImage;
+    let sourceForSampling = useRestoredPreview ? this.image : this.originalImage;
     if (!sourceForSampling) {
       if (!this.cells.length) {
         this.renderCanvas();
@@ -1139,7 +1143,11 @@ Page({
         this.setData({ statusText: "正在生成图纸", statusState: "working" });
       }
 
-      const finalSource = this.originalImage ? await this.buildProcessedSource(this.originalImage, aiInfo) : sourceForSampling;
+      const finalSource = useRestoredPreview
+        ? sourceForSampling
+        : this.originalImage
+          ? await this.buildProcessedSource(this.originalImage, aiInfo)
+          : sourceForSampling;
       if (token !== this.processToken) return;
 
       this.image = finalSource;
