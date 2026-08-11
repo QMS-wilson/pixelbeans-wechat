@@ -206,7 +206,7 @@
   <view class="section-shell feedback-section">
     <view class="membership-head">
       <text class="membership-title">意见反馈</text>
-      <text class="membership-sub">欢迎提出建议；输入管理密码可进入卡密管理</text>
+      <text class="membership-sub">欢迎提出您宝贵的建议</text>
     </view>
     <textarea
       class="feedback-input"
