@@ -41,7 +41,7 @@ exports.main = async (event) => {
     }
 
     if (action === "saveMeta") {
-      const { id, name, savedAt, cols, rows, paletteIndex, gridSize, mergeLevel, gridLineOn, sourceFingerprint, sourceType, selectedColorCode, fileID } = event || {};
+      const { id, name, savedAt, cols, rows, paletteIndex, gridSize, mergeLevel, gridLineOn, sourceFingerprint, sourceType, selectedColorCode, fileID, originalFileID, previewFileID } = event || {};
       if (!id || !fileID) {
         return { error: "Missing id or fileID", message: "缺少项目 ID 或文件 ID。" };
       }
@@ -60,6 +60,8 @@ exports.main = async (event) => {
         sourceType: String(sourceType || "blank"),
         selectedColorCode: String(selectedColorCode || ""),
         fileID,
+        originalFileID: String(originalFileID || ""),
+        previewFileID: String(previewFileID || ""),
         updatedAt: new Date().toISOString(),
       };
       await coll.doc(id).set({ data: record });
@@ -77,9 +79,10 @@ exports.main = async (event) => {
       if (!doc) {
         return { error: "Project not found", message: "项目不存在或无权删除。" };
       }
-      if (doc.fileID) {
+      const fileList = [doc.fileID, doc.originalFileID, doc.previewFileID].filter(Boolean);
+      if (fileList.length) {
         try {
-          await cloud.deleteFile({ fileList: [doc.fileID] });
+          await cloud.deleteFile({ fileList });
         } catch (error) {
           console.error("[project-store] deleteFile failed", { id, error: error && error.message });
         }
@@ -94,7 +97,13 @@ exports.main = async (event) => {
       await ensureCollection(PROJECTS_COLLECTION);
       const listRes = await coll.where({ openid: OPENID }).limit(1000).get();
       const rows = listRes.data || [];
-      const fileIDs = rows.map((doc) => doc && doc.fileID).filter(Boolean);
+      const fileIDs = [];
+      rows.forEach((doc) => {
+        if (!doc) return;
+        [doc.fileID, doc.originalFileID, doc.previewFileID].forEach((fid) => {
+          if (fid) fileIDs.push(fid);
+        });
+      });
       // deleteFile 单次最多 50 个，分批删除
       for (let i = 0; i < fileIDs.length; i += 50) {
         try {

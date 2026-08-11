@@ -2235,7 +2235,10 @@ Page({
   },
 
   // 上传图纸 JSON 到云存储，并在 projects 集合写入元数据；返回 { ...meta, fileID }
-  async uploadProjectToCloud(project) {
+  // 上传图纸 JSON 到云存储，并在 projects 集合写入元数据；返回 { ...meta, fileID, originalFileID, previewFileID }
+  // withImages=true 时把原图/预览图一并上传，载入后调整格数/颜色合并仍以原图为基准，避免越调越模糊
+  async uploadProjectToCloud(project, options = {}) {
+    const { withImages = false } = options;
     const filePath = this.writeProjectTempFile(project);
     const upload = await new Promise((resolve, reject) => {
       wx.cloud.uploadFile({
@@ -2245,18 +2248,64 @@ Page({
         fail: (err) => reject(new Error((err && err.errMsg) || "云存储上传失败")),
       });
     });
+    let originalFileID = "";
+    let previewFileID = "";
+    if (withImages) {
+      const originalPath = this.originalImage ? this.cacheImageFile(`project-original-${project.id}`, this.originalImage) : "";
+      const previewPath =
+        this.image && this.image !== this.originalImage ? this.cacheImageFile(`project-preview-${project.id}`, this.image) : "";
+      const uploadImage = (localPath, cloudName) =>
+        localPath
+          ? new Promise((resolve, reject) => {
+              wx.cloud.uploadFile({
+                cloudPath: `projects/${cloudName}`,
+                filePath: localPath,
+                success: resolve,
+                fail: (err) => reject(new Error((err && err.errMsg) || "云存储图片上传失败")),
+              });
+            })
+          : Promise.resolve(null);
+      const [origUpload, prevUpload] = await Promise.all([
+        uploadImage(originalPath, `${project.id}-original.png`),
+        uploadImage(previewPath, `${project.id}-preview.png`),
+      ]);
+      originalFileID = (origUpload && origUpload.fileID) || "";
+      previewFileID = (prevUpload && prevUpload.fileID) || "";
+    }
     const meta = this.projectToMeta(project);
     const res = await callFunction("project-store", {
       action: "saveMeta",
       ...meta,
       fileID: upload.fileID,
+      originalFileID,
+      previewFileID,
     });
     if (!res || !res.success) {
       throw new Error((res && res.message) || "项目元数据保存失败");
     }
-    return { ...meta, fileID: upload.fileID };
+    return { ...meta, fileID: upload.fileID, originalFileID, previewFileID };
   },
 
+  // 从云端下载项目缓存的原图/预览图（失败返回 null，不影响图纸加载）
+  downloadProjectImage(fileID) {
+    return new Promise((resolve) => {
+      if (!fileID) return resolve(null);
+      wx.cloud.downloadFile({
+        fileID,
+        success: (dl) => {
+          const createImage = () =>
+            this.preview && this.preview.canvas && this.preview.canvas.createImage
+              ? this.preview.canvas.createImage()
+              : wx.createImage();
+          const image = createImage();
+          image.onload = () => resolve(image);
+          image.onerror = () => resolve(null);
+          image.src = dl.tempFilePath;
+        },
+        fail: () => resolve(null),
+      });
+    });
+  },
   // 从云端下载图纸 JSON 并解析出 cells
   downloadProjectCells(project) {
     return new Promise((resolve, reject) => {
@@ -2360,9 +2409,14 @@ Page({
     };
     wx.showLoading({ title: "保存中", mask: true });
     try {
-      const uploaded = await this.uploadProjectToCloud(project);
+      const uploaded = await this.uploadProjectToCloud(project, { withImages: true });
       const projects = this.readProjects().filter((p) => p.id !== project.id);
-      projects.push({ ...project, fileID: uploaded.fileID });
+      projects.push({
+        ...project,
+        fileID: uploaded.fileID,
+        originalFileID: uploaded.originalFileID,
+        previewFileID: uploaded.previewFileID,
+      });
       this.writeProjects(projects);
       wx.hideLoading();
       this.setData({ projectName: "" });
@@ -2379,68 +2433,75 @@ Page({
     const projects = this.readProjects();
     const project = projects[index];
     if (!project) return;
-    let loaded = project;
-    if (!Array.isArray(project.cells) || !project.cells.length) {
-      if (!project.fileID) {
+    wx.showLoading({ title: "加载中", mask: true });
+    try {
+      // 并行下载图纸数据与原图/预览图：载入后调整格数/颜色合并仍以原图为基准，避免越调越模糊
+      const cellsPromise =
+        Array.isArray(project.cells) && project.cells.length
+          ? Promise.resolve(project.cells)
+          : this.downloadProjectCells(project);
+      const [cells, originalImage, previewImage] = await Promise.all([
+        cellsPromise,
+        this.downloadProjectImage(project.originalFileID),
+        this.downloadProjectImage(project.previewFileID),
+      ]);
+      if (!Array.isArray(cells) || !cells.length) {
         this.openErrorOverlay("该项目数据不完整，无法加载。");
         return;
       }
-      wx.showLoading({ title: "加载中", mask: true });
-      try {
-        const cells = await this.downloadProjectCells(project);
-        loaded = { ...project, cells };
-        projects[index] = loaded;
-        this.writeProjects(projects);
-      } catch (error) {
-        wx.hideLoading();
-        this.openErrorOverlay(`加载失败：${error.message || "请稍后重试"}`);
+      // 仅把可序列化的 cells 与 fileID 写回本地缓存（Image 对象不入缓存）
+      projects[index] = { ...project, cells };
+      this.writeProjects(projects);
+      const loaded = { ...project, cells, originalImage, previewImage };
+      const paletteKey = PALETTE_KEYS[loaded.paletteIndex];
+      if (!paletteKey) {
+        this.openErrorOverlay("该项目使用的色板不存在，无法载入。");
         return;
       }
+      this.setData({
+        paletteIndex: loaded.paletteIndex,
+        paletteLabel: PALETTE_OPTIONS[loaded.paletteIndex] ? PALETTE_OPTIONS[loaded.paletteIndex].label : this.data.paletteLabel,
+        gridSize: loaded.gridSize || this.data.gridSize,
+        mergeLevel: loaded.mergeLevel || this.data.mergeLevel,
+        gridLineOn: loaded.gridLineOn !== undefined ? loaded.gridLineOn : this.data.gridLineOn,
+      });
+      // 恢复上次选中的画笔颜色，避免画笔颜色被重置后“点了没反应”
+      if (loaded.selectedColorCode && this.getActivePalette().some((color) => color.code === loaded.selectedColorCode)) {
+        this.selectedColorCode = loaded.selectedColorCode;
+      }
+      this.isDrawing = false;
+      this.renderMetrics = null;
+      this.cells = loaded.cells;
+      this.cols = loaded.cols || (loaded.cells[0] || []).length;
+      this.rows = loaded.rows || loaded.cells.length;
+      this.sourceFingerprint = loaded.sourceFingerprint || "";
+      this.sourceType = loaded.sourceType || "blank";
+      // 恢复原图/预览图：调整格数/颜色合并时以原图为基准重采样
+      this.originalImage = loaded.originalImage || null;
+      this.image = loaded.previewImage || loaded.originalImage || null;
+      this.history = [];
+      this.redoHistory = [];
+      this.renderEditorPalette();
+      this.recomputeCounts();
+      this.renderCanvas();
+      this.updateComparePreview(this.originalImage, this.image || this.originalImage);
+      this.syncUiSummary();
+      this.updateEditorActions();
+      this.schedulePatternSave();
+      this.setData({
+        sourceType: this.sourceType,
+        showClearHint: false,
+        canvasHint: `已载入项目「${loaded.name || "未命名项目"}」。`,
+        statusText: "项目已载入",
+        statusState: "ready",
+        projectModalVisible: false,
+      });
+      this.syncOverlayState();
+    } catch (error) {
+      this.openErrorOverlay(`加载失败：${error.message || "请稍后重试"}`);
+    } finally {
       wx.hideLoading();
     }
-    if (!Array.isArray(loaded.cells) || !loaded.cells.length) return;
-    const paletteKey = PALETTE_KEYS[loaded.paletteIndex];
-    if (!paletteKey) {
-      this.openErrorOverlay("该项目使用的色板不存在，无法载入。");
-      return;
-    }
-    this.setData({
-      paletteIndex: loaded.paletteIndex,
-      paletteLabel: PALETTE_OPTIONS[loaded.paletteIndex] ? PALETTE_OPTIONS[loaded.paletteIndex].label : this.data.paletteLabel,
-      gridSize: loaded.gridSize || this.data.gridSize,
-      mergeLevel: loaded.mergeLevel || this.data.mergeLevel,
-      gridLineOn: loaded.gridLineOn !== undefined ? loaded.gridLineOn : this.data.gridLineOn,
-    });
-    // 恢复上次选中的画笔颜色，避免画笔颜色被重置后“点了没反应”
-    if (loaded.selectedColorCode && this.getActivePalette().some((color) => color.code === loaded.selectedColorCode)) {
-      this.selectedColorCode = loaded.selectedColorCode;
-    }
-    this.isDrawing = false;
-    this.renderMetrics = null;
-    this.cells = loaded.cells;
-    this.cols = loaded.cols || (loaded.cells[0] || []).length;
-    this.rows = loaded.rows || loaded.cells.length;
-    this.sourceFingerprint = loaded.sourceFingerprint || "";
-    this.sourceType = loaded.sourceType || "blank";
-    this.originalImage = null;
-    this.image = null;
-    this.history = [];
-    this.redoHistory = [];
-    this.renderEditorPalette();
-    this.recomputeCounts();
-    this.renderCanvas();
-    this.syncUiSummary();
-    this.updateEditorActions();
-    this.schedulePatternSave();
-    this.setData({
-      sourceType: this.sourceType,
-      showClearHint: false,
-      canvasHint: `已载入项目「${loaded.name || "未命名项目"}」。`,
-      statusText: "项目已载入",
-      statusState: "ready",
-      projectModalVisible: false,
-    });
-    this.syncOverlayState();
   },
 
   deleteProjectFromLibrary(e) {
