@@ -45,6 +45,17 @@ exports.main = async (event) => {
       if (!id || !fileID) {
         return { error: "Missing id or fileID", message: "缺少项目 ID 或文件 ID。" };
       }
+      // 归属校验：已存在的文档属于其他 openid 时禁止覆盖
+      let existing = null;
+      try {
+        const res = await coll.doc(id).get();
+        existing = res.data || null;
+      } catch (error) {
+        existing = null;
+      }
+      if (existing && existing.openid && existing.openid !== OPENID) {
+        return { error: "Forbidden", message: "无权覆盖他人项目。" };
+      }
       const record = {
         id,
         openid: OPENID,

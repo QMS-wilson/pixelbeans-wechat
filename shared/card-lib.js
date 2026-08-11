@@ -505,7 +505,55 @@ async function optimizeImage(imageBase64, prompt = DEFAULT_PROMPT) {
   throw new Error("AI 优化超时，请稍后重试。");
 }
 
+// 提交 AI 优化任务（火山引擎异步任务），立即返回 taskId，不做轮询。
+// 客户端随后通过 pollImageTask 轮询结果，避免云函数单次 60s 超时限制。
+async function submitImageTask(imageBase64, prompt = DEFAULT_PROMPT) {
+  const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+  const submitResult = await callVolc("CVSync2AsyncSubmitTask", {
+    req_key: "jimeng_t2i_v40",
+    binary_data_base64: [base64Data],
+    prompt,
+    scale: 0.5,
+    force_single: true,
+  });
+  const taskId = submitResult.data?.task_id || submitResult.task_id;
+  console.log("[submitImageTask] submitted", { taskId, promptLength: String(prompt || "").length });
+  if (!taskId) throw new Error("AI 优化任务提交失败：未返回 task_id。");
+  return taskId;
+}
+
+// 查询一次 AI 优化任务结果，返回 { status: "processing" | "success" | "failed", imageDataUrl?, message? }
+async function pollImageTask(taskId) {
+  const result = await callVolc("CVSync2AsyncGetResult", {
+    req_key: "jimeng_t2i_v40",
+    task_id: taskId,
+    req_json: JSON.stringify({ return_url: true }),
+  });
+  const taskStatus = result.data?.task_status || result.data?.status;
+  if (taskStatus === "success" || taskStatus === "done") {
+    const imageUrl = result.data?.images?.[0]?.url || result.data?.image_urls?.[0];
+    const imageBase64Result = result.data?.binary_data_base64?.[0];
+    let imageDataUrl = "";
+    if (imageBase64Result) {
+      imageDataUrl = `data:image/jpeg;base64,${imageBase64Result}`;
+    } else if (imageUrl) {
+      imageDataUrl = await imageUrlToDataUrl(imageUrl);
+    }
+    if (!imageDataUrl) throw new Error("AI 优化完成，但没有返回图片。");
+    return { status: "success", imageDataUrl };
+  }
+  if (taskStatus === "failed") {
+    return { status: "failed", message: result.message || "AI 优化任务失败。" };
+  }
+  return { status: "processing" };
+}
+
 // ---------------- 下载 ----------------
+
+function normalizeFileExt(ext, fallback = ".bin") {
+  const value = String(ext || "").trim().toLowerCase().replace(/^\.+/, "");
+  return value ? `.${value}` : fallback;
+}
 
 async function prepareDownloadFile({ dataUrl, text, filename, ext }) {
   let buffer = null;
@@ -516,12 +564,13 @@ async function prepareDownloadFile({ dataUrl, text, filename, ext }) {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) throw new Error("Invalid dataUrl");
     buffer = Buffer.from(match[2], "base64");
-    ext = ext || ".png";
     mime = match[1] || "image/png";
+    const fallbackExt = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : ".jpg";
+    ext = normalizeFileExt(ext, fallbackExt);
     cloudPath = `downloads/${fileId}${ext}`;
   } else if (text !== null && text !== undefined) {
     buffer = Buffer.from(text, "utf8");
-    ext = ext || ".csv";
+    ext = normalizeFileExt(ext, ".csv");
     mime = "text/csv; charset=utf-8";
     cloudPath = `downloads/${fileId}${ext}`;
   } else {
@@ -558,6 +607,31 @@ async function uploadImageResult(dataUrl, taskId) {
 // Reassemble a chunked upload. Each chunk is a dedicated doc in the chunks
 // collection (doc id = <uploadId>__<index>) with uploadId/index/total/fileID.
 // Query by uploadId, sort by index, then download and merge the base64 parts.
+async function cleanupChunks(uploadId) {
+  try {
+    const coll = db.collection("chunks");
+    let rows = [];
+    let skip = 0;
+    const pageSize = 1000;
+    for (;;) {
+      const res = await coll.where({ uploadId }).skip(skip).limit(pageSize).get();
+      const page = res.data || [];
+      rows = rows.concat(page);
+      if (page.length < pageSize) break;
+      skip += pageSize;
+      if (rows.length >= 5000) break;
+    }
+    const fileIDs = rows.map((row) => row && row.fileID).filter(Boolean);
+    for (let i = 0; i < fileIDs.length; i += 50) {
+      await cloud.deleteFile({ fileList: fileIDs.slice(i, i + 50) });
+    }
+    await coll.where({ uploadId }).remove();
+    console.log("[cleanupChunks] done", { uploadId, files: fileIDs.length, records: rows.length });
+  } catch (error) {
+    console.error("[cleanupChunks] failed", { uploadId, error: error && error.message });
+  }
+}
+
 async function assembleUpload(uploadId) {
   console.log("[assembleUpload] start", { uploadId });
   const coll = db.collection("chunks");
@@ -604,7 +678,10 @@ async function assembleUpload(uploadId) {
 
   const merged = parts.join("");
   console.log("[assembleUpload] merged", { uploadId, chunkCount: rows.length, base64Length: merged.length });
-  return Buffer.from(merged, "base64");
+  const buffer = Buffer.from(merged, "base64");
+  // 组装完成后立即清理该 uploadId 的分块文件与记录，避免云存储持续增长
+  await cleanupChunks(uploadId);
+  return buffer;
 }
 
 module.exports = {
@@ -631,6 +708,8 @@ module.exports = {
   unbindOpenid,
   requireAdmin,
   optimizeImage,
+  submitImageTask,
+  pollImageTask,
   prepareDownloadFile,
   uploadImageResult,
   assembleUpload,

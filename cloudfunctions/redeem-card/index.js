@@ -25,27 +25,36 @@ exports.main = async (event) => {
     if (!card) {
       return { error: "Card not found", message: "卡密不存在，请检查后重试。" };
     }
-    if (card.status === "active") {
+    // 同一 openid 退出授权后可重新兑换同一张卡（次数保留，不重复初始化）
+    const sameOpenidReRedeem =
+      Boolean(store.bindings && store.bindings[OPENID] && store.bindings[OPENID].cardCode === card.code);
+    if (card.status === "active" && !sameOpenidReRedeem) {
       return { error: "Card used", message: "该卡密已被使用。" };
     }
     if (card.status === "exhausted") {
       return { error: "Card exhausted", message: "该卡密已失效，请使用新卡密。" };
     }
 
-    card.status = "active";
-    card.usedAt = new Date().toISOString();
-    card.redeemedAt = card.usedAt;
-    card.exhaustedAt = "";
-    card.imageHash = "";
-    card.boundImages = [];
-    card.aiOptimizeCount = 0;
-    card.downloadCount = 0;
+    if (!sameOpenidReRedeem) {
+      card.status = "active";
+      card.usedAt = new Date().toISOString();
+      card.redeemedAt = card.usedAt;
+      card.exhaustedAt = "";
+      card.imageHash = "";
+      card.boundImages = [];
+      card.aiOptimizeCount = 0;
+      card.downloadCount = 0;
+    }
 
     appendLog(store, OPENID, { type: "redeem", cardCode: card.code, detail: "card redeemed" });
     bindOpenid(store, OPENID, card);
     await writeStore(store);
 
-    return { success: true, ...buildAccessPayload(card), message: "卡密兑换成功，可开始使用。" };
+    return {
+      success: true,
+      ...buildAccessPayload(card),
+      message: sameOpenidReRedeem ? "已重新绑定当前卡密，剩余次数保留。" : "卡密兑换成功，可开始使用。",
+    };
   } catch (error) {
     return { error: "Redeem failed", message: error.message || "兑换失败" };
   }

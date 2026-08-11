@@ -95,6 +95,8 @@ Page({
     overlayOpen: false,
     showAiHint: false,
     showClearHint: false,
+    aiOptimizeRemaining: 0,
+    downloadRemaining: 0,
   },
 
   onLoad() {
@@ -471,6 +473,8 @@ Page({
       accessStatusBadgeModal: statusValue,
       paymentUsageSummary: summaryValue,
       redeemDisabled: paid,
+      aiOptimizeRemaining: this.aiOptimizeRemaining,
+      downloadRemaining: this.downloadRemaining,
     });
   },
 
@@ -869,12 +873,17 @@ Page({
       throw new Error("请先兑换卡密后再使用 AI 优化。");
     }
     const isTrial = trialAvailable;
+    const myToken = this.processToken;
+    if (this.hasPaidAccess() && this.aiOptimizeRemaining <= 0) {
+      this.queueProtectedAction(() => this.processCurrentImage());
+      throw new Error("当前卡密 AI 优化次数已用完，请兑换新卡密。");
+    }
 
     this.aiOptimizeInFlightKey = cacheKey;
     this.aiOptimizeInFlightPromise = (async () => {
       // 大图分块上传到云存储，避免 callFunction 入参超限 / 直传断流
       const { uploadId: imageUploadId, ext: imageExt } = await uploadDataChunks(imageBase64, "ai-input");
-      const result = await requestJson("/api/ai-optimize", {
+      const submitResult = await requestJson("/api/ai-optimize", {
         method: "POST",
         data: {
           imageUploadId,
@@ -885,29 +894,53 @@ Page({
           ...(isTrial ? { freeTrial: true, deviceId: this.getDeviceId() } : {}),
         },
       });
-      if (!result || !result.success || !result.imageFileID) {
-        const error = new Error((result && (result.message || result.error)) || "AI 优化失败");
-        error.status = result && result.statusCode;
+      const taskId = submitResult && submitResult.taskId;
+      if (!submitResult || !submitResult.success || !taskId) {
+        const error = new Error((submitResult && (submitResult.message || submitResult.error)) || "AI 优化提交失败");
+        error.status = submitResult && submitResult.statusCode;
         throw error;
       }
-      if (isTrial || result.freeTrialUsed) {
-        this.freeTrialUsed = true;
-        wx.setStorageSync(FREE_TRIAL_KEY, true);
-        this.toast("免费 AI 体验已完成，后续使用需兑换卡密");
+      this.syncAccessState(submitResult);
+      // 云函数版：提交后返回 taskId，由前端轮询 action=check，避免云函数 60s 超时限制
+      const pollStartedAt = Date.now();
+      for (;;) {
+        if (myToken !== this.processToken) throw new Error("AI 优化已取消");
+        if (Date.now() - pollStartedAt > 180000) throw new Error("AI 优化超时，请稍后重试。");
+        let check = null;
+        try {
+          check = await requestJson("/api/ai-optimize", {
+            method: "POST",
+            data: { action: "check", taskId },
+          });
+        } catch (error) {
+          console.warn("[optimizeImageWithAI] poll error, retrying", error);
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
+        if (check && check.success && check.imageFileID) {
+          if (isTrial) {
+            this.freeTrialUsed = true;
+            wx.setStorageSync(FREE_TRIAL_KEY, true);
+            this.toast("免费 AI 体验已完成，后续使用需兑换卡密");
+          }
+          this.syncAccessState(check);
+          const downloadResult = await new Promise((resolve, reject) => {
+            wx.cloud.downloadFile({
+              fileID: check.imageFileID,
+              success: resolve,
+              fail: () => reject(new Error("AI 优化结果下载失败，请重试。")),
+            });
+          });
+          const optimizedImage = await this.loadImageSource(downloadResult.tempFilePath);
+          this.aiOptimizeCacheKey = cacheKey;
+          this.aiOptimizeCacheImage = optimizedImage;
+          return optimizedImage;
+        }
+        if (check && check.failed) {
+          throw new Error((check && check.message) || "AI 优化任务失败，请重试。");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
-      this.syncAccessState(result);
-      // 云函数版：结果图已上传到云存储，前端下载后再载入
-      const downloadResult = await new Promise((resolve, reject) => {
-        wx.cloud.downloadFile({
-          fileID: result.imageFileID,
-          success: resolve,
-          fail: () => reject(new Error("AI 优化结果下载失败，请重试。")),
-        });
-      });
-      const optimizedImage = await this.loadImageSource(downloadResult.tempFilePath);
-      this.aiOptimizeCacheKey = cacheKey;
-      this.aiOptimizeCacheImage = optimizedImage;
-      return optimizedImage;
     })();
 
     try {
@@ -1807,7 +1840,7 @@ Page({
       });
     });
     console.log("[submitDownload] read done", { byteLength: read.data.byteLength });
-    return read.data;
+    return { buffer: read.data, filename: (result && result.filename) || filename };
   },
 
   // 保存下载结果：CSV 直接预览并复制；PNG 写入临时目录后存入相册（失败则预览供长按保存）
@@ -1849,6 +1882,11 @@ Page({
       this.setRedeemMessage("请先兑换卡密，解锁下载权限后再导出图纸。", "error");
       return;
     }
+    if (this.downloadRemaining <= 0) {
+      this.queueProtectedAction(() => this.exportPng(showCodes));
+      this.setRedeemMessage("当前卡密下载次数已用完，请兑换新卡密。", "error");
+      return;
+    }
     if (!this.sourceFingerprint) {
       this.setRedeemMessage("未识别到当前图片，请重新上传后再试。", "error");
       return;
@@ -1870,7 +1908,7 @@ Page({
       // 步骤2：画布转 base64（10240 为最大边长限制）
       const dataUrl = await this.canvasToDataUrl(exportCanvas, 10240);
       // 步骤3：分块上传 → 服务端生成 → 下载结果，全程由 onProgress 更新进度条
-      const buffer = await this.submitDownload({
+      const output = await this.submitDownload({
         filename,
         dataUrl,
         onProgress: (label, percent, indeterminate) =>
@@ -1878,7 +1916,7 @@ Page({
       });
       // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
-      this.saveDownloadedFile(buffer, filename);
+      this.saveDownloadedFile(output.buffer, output.filename || filename);
       console.log("[exportPng] done", { filename });
       this.hideExportProgress();
       await this.loadAccessStatus();
@@ -1905,6 +1943,11 @@ Page({
     if (!this.hasPaidAccess()) {
       this.queueProtectedAction(() => this.exportCsv());
       this.setRedeemMessage("请先兑换卡密，解锁下载权限后再导出 CSV 清单。", "error");
+      return;
+    }
+    if (this.downloadRemaining <= 0) {
+      this.queueProtectedAction(() => this.exportCsv());
+      this.setRedeemMessage("当前卡密下载次数已用完，请兑换新卡密。", "error");
       return;
     }
     if (!this.sourceFingerprint) {
@@ -1935,7 +1978,7 @@ Page({
       const csvText = rows.map((row) => row.map((cell) => this.sanitizeCsvField(cell)).join(",")).join("\n");
       const filename = `拼豆清单-${this.cols}x${this.rows}.csv`;
       // 步骤2：上传文本并下载生成的文件（同样走进度条）
-      const buffer = await this.submitDownload({
+      const output = await this.submitDownload({
         filename,
         text: `\uFEFF${csvText}`,
         onProgress: (label, percent, indeterminate) =>
@@ -1943,7 +1986,7 @@ Page({
       });
       // 步骤4：保存下载结果（PNG 存相册 / CSV 预览），成功后关闭进度浮层
       this.updateExportProgress("正在保存…", 98, false);
-      this.saveDownloadedFile(buffer, filename);
+      this.saveDownloadedFile(output.buffer, output.filename || filename);
       console.log("[exportCsv] done", { filename });
       this.hideExportProgress();
       await this.loadAccessStatus();

@@ -59,7 +59,12 @@ exports.main = async (event) => {
     console.log("[download-prepare] data ready", {
       resolvedDataUrlLength: resolvedDataUrl ? resolvedDataUrl.length : 0,
     });
-    const prepared = await prepareDownloadFile({ dataUrl: resolvedDataUrl, text, filename: safeFilename });
+    const prepared = await prepareDownloadFile({
+      dataUrl: resolvedDataUrl,
+      text,
+      filename: safeFilename,
+      ext: dataExt,
+    });
     consumeCardAction(card, "download");
     appendLog(store, OPENID, {
       type: "download",
