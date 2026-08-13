@@ -24,6 +24,7 @@ Page({
 
   onReady() {
     // 画布位于 wx:else 条件块内，需等待分享数据加载完成后再初始化
+    this.loadShare();
   },
 
   initCanvases() {
