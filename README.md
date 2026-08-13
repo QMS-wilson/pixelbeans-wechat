@@ -111,3 +111,10 @@ wx.cloud.callFunction({
 - 保存图片到相册需要申请 `scope.writePhotosAlbum` 权限（`wx.saveImageToPhotosAlbum` 会自动弹授权）。
 - 卡密数据只有一份（云数据库），请定期通过 `card-admin list` 导出备份。
 - 云存储中的 `ai-results/`、`downloads/`、`projects/`、`shares/`、`share-staging/` 文件会持续增长，请定期在控制台清理或增加定时清理策略；分块文件（`chunks/`）会在组装完成后自动删除，暂存文件会在分享创建成功后自动删除。
+
+## AI 优化失败排查
+
+- 前端与 `ai-optimize` 云函数必须一起重新部署：前端提交后会校验云函数返回的 `version` 字段（当前为 2），检测到旧版本会直接提示「请重新部署 ai-optimize 云函数」，避免无响应。
+- 云函数已添加完整日志：`[callVolc] response`（火山引擎 HTTP 状态与响应体）、`[submitImageTask]`、`[pollImageTask]`（任务状态、是否有返回图）、`[ai-optimize] check` 等，可在云开发控制台 → 云函数 → 日志中查看具体失败原因。
+- 火山引擎业务错误会被分类透出：余额不足/欠费、鉴权失败（密钥或权限）、并发限制、内容安全拦截、限流等，都会以明确文案提示，不会再出现「无响应」。
+- 前端轮询最多 180 秒；查询连续失败 3 次会直接报错，不会静默重试 3 分钟。

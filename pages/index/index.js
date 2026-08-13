@@ -887,7 +887,9 @@ Page({
     this.aiOptimizeInFlightKey = cacheKey;
     this.aiOptimizeInFlightPromise = (async () => {
       // 大图分块上传到云存储，避免 callFunction 入参超限 / 直传断流
+      console.log("[optimizeImageWithAI] upload chunks start", { base64Length: imageBase64.length });
       const { uploadId: imageUploadId, ext: imageExt } = await uploadDataChunks(imageBase64, "ai-input");
+      console.log("[optimizeImageWithAI] chunks uploaded", { imageUploadId, imageExt });
       const submitResult = await requestJson("/api/ai-optimize", {
         method: "POST",
         data: {
@@ -905,24 +907,52 @@ Page({
         error.status = submitResult && submitResult.statusCode;
         throw error;
       }
+      if (submitResult.version !== 2) {
+        throw new Error("检测到 ai-optimize 云函数为旧版本：请先在微信开发者工具中重新部署 ai-optimize 云函数后再试。");
+      }
+      console.log("[optimizeImageWithAI] submitted", { taskId, version: submitResult.version });
       this.syncAccessState(submitResult);
       // 云函数版：提交后返回 taskId，由前端轮询 action=check，避免云函数 60s 超时限制
       const pollStartedAt = Date.now();
+      let pollAttempt = 0;
+      let consecutiveErrors = 0;
       for (;;) {
         if (myToken !== this.processToken) throw new Error("AI 优化已取消");
         if (Date.now() - pollStartedAt > 180000) throw new Error("AI 优化超时，请稍后重试。");
         let check = null;
+        pollAttempt += 1;
         try {
           check = await requestJson("/api/ai-optimize", {
             method: "POST",
             data: { action: "check", taskId },
           });
+          consecutiveErrors = 0;
         } catch (error) {
-          console.warn("[optimizeImageWithAI] poll error, retrying", error);
+          consecutiveErrors += 1;
+          console.warn("[optimizeImageWithAI] poll error", {
+            taskId,
+            pollAttempt,
+            consecutiveErrors,
+            error: error && error.message,
+          });
+          if (consecutiveErrors >= 3) {
+            throw new Error(`AI 任务查询连续失败，请稍后重试（${(error && error.message) || "云函数调用失败"}）`);
+          }
           await new Promise((resolve) => setTimeout(resolve, 3000));
           continue;
         }
+        if (pollAttempt % 5 === 0 || check.pending || check.failed) {
+          console.log("[optimizeImageWithAI] poll", {
+            taskId,
+            pollAttempt,
+            pending: !!check.pending,
+            success: !!check.success,
+            failed: !!check.failed,
+            message: (check && check.message) || "",
+          });
+        }
         if (check && check.success && check.imageFileID) {
+          console.log("[optimizeImageWithAI] done", { taskId, pollAttempt, imageFileID: check.imageFileID });
           if (isTrial) {
             this.freeTrialUsed = true;
             wx.setStorageSync(FREE_TRIAL_KEY, true);
@@ -942,11 +972,15 @@ Page({
           return optimizedImage;
         }
         if (check && check.failed) {
+          console.error("[optimizeImageWithAI] task failed", { taskId, pollAttempt, message: check.message });
           throw new Error((check && check.message) || "AI 优化任务失败，请重试。");
         }
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
     })();
+    this.aiOptimizeInFlightPromise.catch((error) => {
+      console.error("[optimizeImageWithAI] rejected", { cacheKey, error: (error && error.stack) || error });
+    });
 
     try {
       return await this.aiOptimizeInFlightPromise;

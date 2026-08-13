@@ -118,7 +118,7 @@ async function submitTask(OPENID, event) {
     const taskId = await submitImageTask(resolvedImageBase64, prompt);
     await recordTask({ taskId, OPENID, imageHash: normalizedHash, freeTrialUsed: true, deviceId });
     console.log("[ai-optimize] trial submitted", { taskId });
-    return { success: true, taskId, submitted: true };
+    return { success: true, taskId, submitted: true, version: 2 };
   }
 
   if (!card) {
@@ -141,7 +141,7 @@ async function submitTask(OPENID, event) {
   const taskId = await submitImageTask(resolvedImageBase64, prompt);
   await recordTask({ taskId, OPENID, cardCode: card.code, imageHash: allowed.imageHash, freeTrialUsed: false });
   console.log("[ai-optimize] paid submitted", { taskId });
-  return { success: true, taskId, submitted: true, ...buildAccessPayload(card) };
+  return { success: true, taskId, submitted: true, version: 2, ...buildAccessPayload(card) };
 }
 
 // 查询 AI 任务结果（客户端轮询）：成功后上传结果图并幂等扣减次数
@@ -161,28 +161,33 @@ async function checkTask(OPENID, event) {
   if (!taskId) {
     return { error: "Missing task id", message: "缺少任务 ID。" };
   }
+  console.log("[ai-optimize] check start", { taskId, OPENID });
   const coll = db.collection(AI_TASKS_COLLECTION);
   let task = null;
   try {
     const res = await coll.doc(taskId).get();
     task = res.data;
   } catch (error) {
+    console.error("[ai-optimize] check task read failed", { taskId, error: error && error.message });
     return { error: "Task not found", message: "AI 任务不存在，请重新提交。" };
   }
   if (!task || task.openid !== OPENID) {
+    console.error("[ai-optimize] check forbidden", { taskId, taskOpenid: task && task.openid, OPENID });
     return { error: "Forbidden", message: "无权查询该任务。" };
   }
+  console.log("[ai-optimize] check task state", { taskId, status: task.status, freeTrialUsed: task.freeTrialUsed });
   if (task.status === "done") {
     return {
       success: true,
       imageFileID: task.imageFileID,
       taskId,
       done: true,
+      version: 2,
       ...(await getAccessPayload(OPENID)),
     };
   }
   if (task.status === "failed") {
-    return { success: false, failed: true, message: task.message || "AI 优化任务失败，请重试。" };
+    return { success: false, failed: true, version: 2, message: task.message || "AI 优化任务失败，请重试。" };
   }
 
   let poll;
@@ -191,20 +196,26 @@ async function checkTask(OPENID, event) {
   } catch (error) {
     // 网络抖动等瞬时错误：让客户端稍后继续轮询
     console.error("[ai-optimize] poll error", { taskId, error: error && error.message });
-    return { success: false, pending: true };
+    return { success: false, pending: true, version: 2, pollError: (error && error.message) || "" };
   }
   if (poll.status === "processing") {
-    return { success: false, pending: true };
+    return { success: false, pending: true, version: 2 };
   }
   if (poll.status === "failed") {
     try {
       await coll.doc(taskId).update({
-        data: { status: "failed", message: poll.message || "AI 优化任务失败。", checkedAt: new Date().toISOString() },
+        data: {
+          status: "failed",
+          message: poll.message || "AI 优化任务失败。",
+          volcError: String(poll.message || ""),
+          checkedAt: new Date().toISOString(),
+        },
       });
     } catch (error) {
       console.error("[ai-optimize] mark failed error", error);
     }
-    return { success: false, failed: true, message: poll.message || "AI 优化任务失败，请重试。" };
+    console.error("[ai-optimize] task failed", { taskId, message: poll.message });
+    return { success: false, failed: true, version: 2, message: poll.message || "AI 优化任务失败，请重试。" };
   }
 
   const imageFileID = await uploadImageResult(poll.imageDataUrl, taskId);
@@ -226,10 +237,11 @@ async function checkTask(OPENID, event) {
         imageFileID: (again.data && again.data.imageFileID) || imageFileID,
         taskId,
         done: true,
+        version: 2,
         ...(await getAccessPayload(OPENID)),
       };
     } catch (error) {
-      return { success: true, imageFileID, taskId, done: true, ...(await getAccessPayload(OPENID)) };
+      return { success: true, imageFileID, taskId, done: true, version: 2, ...(await getAccessPayload(OPENID)) };
     }
   }
 
@@ -252,7 +264,8 @@ async function checkTask(OPENID, event) {
     });
   }
   await writeStore(store);
-  return { success: true, imageFileID, taskId, ...(card ? buildAccessPayload(card) : {}) };
+  console.log("[ai-optimize] check done", { taskId, imageFileID, freeTrialUsed: task.freeTrialUsed });
+  return { success: true, imageFileID, taskId, version: 2, ...(card ? buildAccessPayload(card) : {}) };
 }
 
 // AI 优化：action=submit 提交任务并立即返回 taskId；action=check 轮询结果（幂等扣减）
