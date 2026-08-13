@@ -890,17 +890,30 @@ Page({
       console.log("[optimizeImageWithAI] upload chunks start", { base64Length: imageBase64.length });
       const { uploadId: imageUploadId, ext: imageExt } = await uploadDataChunks(imageBase64, "ai-input");
       console.log("[optimizeImageWithAI] chunks uploaded", { imageUploadId, imageExt });
-      const submitResult = await requestJson("/api/ai-optimize", {
-        method: "POST",
-        data: {
-          imageUploadId,
-          imageExt,
-          prompt,
-          imageHash: this.sourceFingerprint,
-          accessToken: this.accessToken || undefined,
-          ...(isTrial ? { freeTrial: true, deviceId: this.getDeviceId() } : {}),
-        },
-      });
+      let submitResult = null;
+      try {
+        submitResult = await requestJson("/api/ai-optimize", {
+          method: "POST",
+          data: {
+            imageUploadId,
+            imageExt,
+            prompt,
+            imageHash: this.sourceFingerprint,
+            accessToken: this.accessToken || undefined,
+            ...(isTrial ? { freeTrial: true, deviceId: this.getDeviceId() } : {}),
+          },
+        });
+      } catch (error) {
+        // 服务端按 openid/设备校验到免费体验已用完：同步本地标记并引导兑换卡密，避免每次重复请求
+        if (isTrial && String(error && error.message).includes("免费 AI 体验次数已用完")) {
+          console.warn("[optimizeImageWithAI] free trial used up, guide to redeem", error.message);
+          this.freeTrialUsed = true;
+          wx.setStorageSync(FREE_TRIAL_KEY, true);
+          this.queueProtectedAction(() => this.processCurrentImage());
+          this.setRedeemMessage("免费 AI 体验次数已用完，请兑换卡密后继续使用。", "error");
+        }
+        throw error;
+      }
       const taskId = submitResult && submitResult.taskId;
       if (!submitResult || !submitResult.success || !taskId) {
         const error = new Error((submitResult && (submitResult.message || submitResult.error)) || "AI 优化提交失败");
