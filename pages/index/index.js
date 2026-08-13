@@ -99,7 +99,8 @@ Page({
     downloadRemaining: 0,
   },
 
-  onLoad() {
+  onLoad(options) {
+    this.importShareId = String((options && options.import) || "").trim();
     // 大体积状态放到非响应式实例属性，避免 setData 性能问题
     this.cells = [];
     this.cols = 64;
@@ -145,7 +146,11 @@ Page({
   onReady() {
     this.initAllCanvases().then(() => {
       this.renderCanvas();
-      this.restorePatternFromStorage();
+      if (this.importShareId) {
+        this.importShareToCanvas(this.importShareId);
+      } else {
+        this.restorePatternFromStorage();
+      }
       this.loadAccessStatus();
     });
   },
@@ -2604,6 +2609,166 @@ Page({
       },
     });
   },
+  // ---------- 图纸分享 ----------
+  writeShareTempFile(project) {
+    const fs = wx.getFileSystemManager();
+    const filePath = `${wx.env.USER_DATA_PATH}/share-${project.id}.json`;
+    fs.writeFileSync(filePath, JSON.stringify(project), "utf8");
+    return filePath;
+  },
+
+  uploadShareFile(localPath, cloudPath) {
+    return new Promise((resolve, reject) => {
+      wx.cloud.uploadFile({
+        cloudPath,
+        filePath: localPath,
+        success: resolve,
+        fail: (err) => reject(new Error((err && err.errMsg) || "云存储上传失败")),
+      });
+    });
+  },
+
+  // 创建当前图纸的分享快照：上传原图/预处理图/图纸 JSON 到暂存区，
+  // 云函数 share-pattern 复制到 shares/ 目录并生成分享链接（接收方可直接查看）
+  async createShareSnapshot() {
+    if (!this.cells.length) return null;
+    const stageId = `stage${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const project = {
+      id: stageId,
+      name: `拼豆图纸 ${this.cols}x${this.rows}`,
+      savedAt: Date.now(),
+      cols: this.cols,
+      rows: this.rows,
+      paletteIndex: this.data.paletteIndex,
+      gridSize: this.data.gridSize,
+      mergeLevel: this.data.mergeLevel,
+      gridLineOn: this.data.gridLineOn,
+      sourceFingerprint: this.sourceFingerprint || "",
+      sourceType: this.sourceType || "blank",
+      selectedColorCode: this.selectedColorCode || "",
+      cells: this.cells,
+    };
+    const jsonPath = this.writeShareTempFile(project);
+    const jsonUpload = await this.uploadShareFile(jsonPath, `share-staging/${stageId}.json`);
+    const originalPath = this.originalImage ? this.cacheImageFile(`share-original-${stageId}`, this.originalImage) : "";
+    const previewPath =
+      this.image && this.image !== this.originalImage ? this.cacheImageFile(`share-preview-${stageId}`, this.image) : "";
+    const [origUpload, prevUpload] = await Promise.all([
+      originalPath ? this.uploadShareFile(originalPath, `share-staging/${stageId}-original.png`) : Promise.resolve(null),
+      previewPath ? this.uploadShareFile(previewPath, `share-staging/${stageId}-preview.png`) : Promise.resolve(null),
+    ]);
+    const res = await callFunction("share-pattern", {
+      action: "create",
+      id: stageId,
+      name: project.name,
+      savedAt: project.savedAt,
+      cols: project.cols,
+      rows: project.rows,
+      paletteIndex: project.paletteIndex,
+      gridSize: project.gridSize,
+      mergeLevel: project.mergeLevel,
+      gridLineOn: project.gridLineOn,
+      sourceFingerprint: project.sourceFingerprint,
+      sourceType: project.sourceType,
+      selectedColorCode: project.selectedColorCode,
+      jsonFileID: jsonUpload.fileID,
+      originalFileID: (origUpload && origUpload.fileID) || "",
+      previewFileID: (prevUpload && prevUpload.fileID) || "",
+      paid: this.hasPaidAccess(),
+    });
+    if (!res || !res.success || !res.path) {
+      throw new Error((res && res.message) || "分享创建失败");
+    }
+    return res;
+  },
+
+  onShareAppMessage() {
+    const ready = Boolean(this.cells && this.cells.length) && !this.data.exportBusy && !this.data.aiOverlayVisible;
+    const fallback = { title: "拼豆图纸生成器 - 像素工坊", path: "/pages/index/index" };
+    if (!ready) return fallback;
+    // 基础库 2.12.0+ 支持 onShareAppMessage 返回 Promise：先创建分享快照，再返回带 shareId 的路径
+    return new Promise((resolve) => {
+      this.createShareSnapshot()
+        .then((result) => {
+          resolve({
+            title: `拼豆图纸 ${this.cols}x${this.rows}，快来查看！`,
+            path: result.path,
+          });
+        })
+        .catch((error) => {
+          console.error("[share] create snapshot failed", error);
+          this.toast("分享创建失败，请重试");
+          resolve(fallback);
+        });
+    });
+  },
+
+  // 被分享者从分享页点击「导入并继续编辑」：把分享图纸载入当前画布
+  async importShareToCanvas(shareId) {
+    if (!shareId) return;
+    wx.showLoading({ title: "导入中…", mask: true });
+    try {
+      const res = await callFunction("share-pattern", { action: "get", shareId });
+      if (!res || !res.success || !res.share) {
+        throw new Error((res && res.message) || "分享不存在或已失效。");
+      }
+      const share = res.share;
+      const [cells, originalImage, previewImage] = await Promise.all([
+        this.downloadProjectCells({ fileID: share.fileID }),
+        this.downloadProjectImage(share.originalFileID),
+        this.downloadProjectImage(share.previewFileID),
+      ]);
+      if (!Array.isArray(cells) || !cells.length) {
+        throw new Error("图纸数据不完整，无法导入。");
+      }
+      if (!PALETTE_KEYS[share.paletteIndex]) {
+        throw new Error("该图纸使用的色板不存在，无法导入。");
+      }
+      this.setData({
+        paletteIndex: share.paletteIndex,
+        paletteLabel: PALETTE_OPTIONS[share.paletteIndex] ? PALETTE_OPTIONS[share.paletteIndex].label : this.data.paletteLabel,
+        gridSize: share.gridSize || this.data.gridSize,
+        mergeLevel: share.mergeLevel || this.data.mergeLevel,
+        gridLineOn: share.gridLineOn !== undefined ? share.gridLineOn : this.data.gridLineOn,
+      });
+      if (share.selectedColorCode && this.getActivePalette().some((color) => color.code === share.selectedColorCode)) {
+        this.selectedColorCode = share.selectedColorCode;
+      }
+      this.isDrawing = false;
+      this.renderMetrics = null;
+      this.cells = cells;
+      this.cols = share.cols || (cells[0] || []).length;
+      this.rows = share.rows || cells.length;
+      this.sourceFingerprint = share.sourceFingerprint || "";
+      this.sourceType = share.sourceType || "blank";
+      this.originalImage = originalImage || null;
+      this.image = previewImage || originalImage || null;
+      this.history = [];
+      this.redoHistory = [];
+      this.aiOptimizeCacheKey = "";
+      this.aiOptimizeCacheImage = null;
+      this.renderEditorPalette();
+      this.recomputeCounts();
+      this.renderCanvas();
+      this.updateComparePreview(this.originalImage, this.image || this.originalImage);
+      this.syncUiSummary();
+      this.updateEditorActions();
+      this.schedulePatternSave();
+      this.setData({
+        sourceType: this.sourceType,
+        showClearHint: false,
+        canvasHint: `已导入分享的图纸「${share.name || "拼豆图纸"}」，可继续编辑。`,
+        statusText: "分享图纸已导入",
+        statusState: "ready",
+      });
+    } catch (error) {
+      console.error("[share] import failed", error);
+      this.openErrorOverlay(`导入分享失败：${error.message || "请稍后重试"}`);
+    } finally {
+      wx.hideLoading();
+    }
+  },
+
   onFeedbackInput(e) {
     this.setData({ feedbackInput: e.detail.value });
   },
