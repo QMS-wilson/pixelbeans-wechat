@@ -2744,7 +2744,12 @@ Page({
         })
         .catch((error) => {
           console.error("[share] create snapshot failed", error);
-          this.toast("分享创建失败，请重试");
+          const shareError = (error && error.message) || "";
+          if (/FUNCTION_NOT_FOUND|FunctionName parameter could not be found/.test(shareError)) {
+            this.toast("分享功能未部署：请先部署 share-pattern 云函数");
+          } else {
+            this.toast("分享创建失败，请重试");
+          }
           resolve(fallback);
         });
     });

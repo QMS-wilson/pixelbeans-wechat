@@ -23,10 +23,7 @@ Page({
   },
 
   onReady() {
-    this.initCanvases().then(() => {
-      this.renderPlaceholder();
-      this.loadShare();
-    });
+    // 画布位于 wx:else 条件块内，需等待分享数据加载完成后再初始化
   },
 
   initCanvases() {
@@ -89,15 +86,22 @@ Page({
       }
       const share = res.share;
       this.share = share;
-      this.setData({
-        loading: false,
-        share,
-        name: share.name || "拼豆图纸",
-        metaText: `${share.cols || 0} x ${share.rows || 0}`,
-        paid: !!share.paid,
-        hasOriginal: !!share.originalFileID,
-        hasPreview: !!share.previewFileID,
+      await new Promise((resolve) => {
+        this.setData(
+          {
+            loading: false,
+            share,
+            name: share.name || "拼豆图纸",
+            metaText: `${share.cols || 0} x ${share.rows || 0}`,
+            paid: !!share.paid,
+            hasOriginal: !!share.originalFileID,
+            hasPreview: !!share.previewFileID,
+          },
+          resolve,
+        );
       });
+      // 画布此时才渲染到页面上，初始化后再下载图片/图纸并绘制
+      await this.initCanvases();
       const [cells, original, preview] = await Promise.all([
         this.downloadCells(share.fileID),
         this.downloadImage(share.originalFileID),
@@ -114,7 +118,11 @@ Page({
       this.renderAll();
     } catch (error) {
       console.error("[share] load failed", error);
-      this.setData({ loading: false, error: error.message || "加载分享失败" });
+      const message = (error && error.message) || "加载分享失败";
+      const classified = /FUNCTION_NOT_FOUND|FunctionName parameter could not be found/.test(message)
+        ? "分享服务未部署：请先在微信开发者工具中部署 share-pattern 云函数。"
+        : message;
+      this.setData({ loading: false, error: classified });
     }
   },
 
