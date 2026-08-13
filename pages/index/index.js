@@ -101,6 +101,7 @@ Page({
 
   onLoad(options) {
     this.importShareId = String((options && options.import) || "").trim();
+    this._pageDestroyed = false;
     // 大体积状态放到非响应式实例属性，避免 setData 性能问题
     this.cells = [];
     this.cols = 64;
@@ -155,6 +156,31 @@ Page({
     });
   },
 
+  onShow() {
+    // 从后台返回时若 AI 遮罩仍在，恢复等待计时器
+    if (this.data.aiOverlayVisible && !this.aiWaitTimer) {
+      this.startAiWaitTimer();
+    }
+  },
+
+  onHide() {
+    // 切后台时停止 AI 等待计时器，避免页面销毁后 interval 回调仍执行
+    this.clearAiWaitTimer();
+  },
+
+  onUnload() {
+    this._pageDestroyed = true;
+    this.clearAiWaitTimer();
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+    }
+    if (this._compareToggleTimer) {
+      clearTimeout(this._compareToggleTimer);
+      this._compareToggleTimer = null;
+    }
+  },
+
   // ---------- 画布初始化 ----------
   initCanvas(id) {
     return new Promise((resolve) => {
@@ -203,6 +229,7 @@ Page({
     this.clearAiWaitTimer();
     const startAt = Date.now();
     const tick = () => {
+      if (this._pageDestroyed) return;
       const seconds = Math.floor((Date.now() - startAt) / 1000);
       this.setData({ aiWaitText: `已等待 ${seconds} 秒，通常需要 30 秒 ~ 2 分钟` });
     };

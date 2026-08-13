@@ -70,6 +70,13 @@ Page({
     this._msgTimer = setTimeout(() => this.setData({ message: "" }), 3000);
   },
 
+  onUnload() {
+    if (this._msgTimer) {
+      clearTimeout(this._msgTimer);
+      this._msgTimer = null;
+    }
+  },
+
   async loadCards() {
     if (!this.data.adminKey) {
       this.setMessage("请先输入管理员密钥", "error");
